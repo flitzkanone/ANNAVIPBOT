@@ -38,7 +38,6 @@ PRICES = {
 }
 
 # --- Pfad-Definitionen ---
-# Code liegt im Hauptordner, Bilder im Unterordner "image"
 VOUCHER_FILE = "vouchers.json"
 MEDIA_DIR = "image"
 
@@ -72,7 +71,6 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
         return []
 
     for filename in os.listdir(MEDIA_DIR):
-        # Normalisiere Dateinamen: kleinschreiben, Sonderzeichen entfernen, Leerzeichen ersetzen
         normalized_filename = filename.lower().lstrip('•-_ ').replace(' ', '_')
         if normalized_filename.startswith(target_prefix):
             matching_files.append(os.path.join(MEDIA_DIR, filename))
@@ -93,7 +91,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Intelligentes Senden: Bearbeitet Textnachrichten, löscht Bilder und sendet neu
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -184,21 +181,49 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=InlineKeyboardMarkup(keyboard_buttons)
             )
 
+    # ##############################################################
+    # HIER IST DIE WICHTIGE ÄNDERUNG
+    # ##############################################################
     elif data.startswith("select_package:"):
-        _, media_type, amount = data.split(":")
-        price = PRICES[media_type][int(amount)]
-        
+        _, media_type, amount_str = data.split(":")
+        amount = int(amount_str)
+        price = PRICES[media_type][amount]
+
+        # Prüfen, ob der Preis korrekt geladen wurde
+        if price is None:
+            logger.error(f"Preis für Paket {amount} {media_type} nicht in den ENV-Variablen gefunden!")
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="Ups, für dieses Paket ist momentan kein Preis hinterlegt. Bitte wähle ein anderes."
+            )
+            # Alte Nachricht trotzdem löschen
+            await query.message.delete()
+            return
+
         text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
         keyboard = [
             [InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")],
             [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")],
-            [InlineKeyboardButton("« Zurück", callback_data="show_price_options")],
+            [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+        # KORREKTUR: Alte Fotonachricht löschen
+        await query.message.delete()
+        # KORREKTUR: Neue Textnachricht senden
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    # ##############################################################
+    # ENDE DER ÄNDERUNG
+    # ##############################################################
 
     elif data.startswith("pay_paypal:"):
-        _, media_type, amount = data.split(":")
-        price = PRICES[media_type][int(amount)]
+        _, media_type, amount_str = data.split(":")
+        amount = int(amount_str)
+        price = PRICES[media_type][amount]
         paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"
         text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\n"
                 f"Gib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n"
@@ -223,7 +248,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Verarbeitet die Eingabe des Gutscheincodes."""
     if context.user_data.get("awaiting_voucher"):
         provider = context.user_data.pop("awaiting_voucher")
         code = update.message.text
@@ -239,7 +263,6 @@ async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE
         await start(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Zeigt den Admin-Bereich mit den eingelösten Gutscheinen."""
     try:
         password = context.args[0]
         if password == ADMIN_PASSWORD:
@@ -256,16 +279,13 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Bitte gib das Passwort an: /admin <passwort>")
 
 def main() -> None:
-    """Startet den Bot."""
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Handler registrieren
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_voucher_code))
 
-    # Startmethode basierend auf Umgebung (Render vs. Lokal)
     if WEBHOOK_URL:
         application.run_webhook(
             listen="0.0.0.0",
