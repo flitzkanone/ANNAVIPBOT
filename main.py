@@ -212,7 +212,27 @@ conv = ConversationHandler(
 )
 application.add_handler(conv)
 
-# --- FastAPI Lifespan ---
+# --- FastAPI Lifespan + Webhook ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await application.bot.set_webhook(url=f
+    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    async with application:
+        await application.start()
+        yield
+        await application.stop()
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    body = await request.json()
+    update = Update.de_json(body, application.bot)
+    await application.process_update(update)
+    return Response(status_code=200)
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "note": "Telegram Bot läuft"}
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
