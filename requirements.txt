@@ -1,4 +1,4 @@
-python-telegram-bot==20.7
-fastapi
-uvicorn
-gunicorn
+python-telegram-bot==20.6
+fastapi==0.111.1
+uvicorn==0.25.0
+gunicorn==21.2.0
