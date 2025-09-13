@@ -1,11 +1,8 @@
 import os
 import json
-import random
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
-import uvicorn
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -17,11 +14,9 @@ from telegram.ext import (
     filters,
 )
 
-# --- Config aus Environment Variables ---
+# --- Config ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-GITHUB_USER = os.getenv("GITHUB_USER")
-GITHUB_REPO = os.getenv("GITHUB_REPO")
 PAYPAL_BASE = "https://www.paypal.me/AnnaComfy972"
 ADMIN_PASSWORD = "1974"
 
@@ -36,7 +31,7 @@ def load_users():
     try:
         with open(USER_FILE, "r") as f:
             return set(json.load(f))
-    except FileNotFoundError:
+    except:
         return set()
 
 def save_users(users):
@@ -47,7 +42,7 @@ def load_vouchers():
     try:
         with open(VOUCHER_FILE, "r") as f:
             return json.load(f)
-    except FileNotFoundError:
+    except:
         return {}
 
 def save_vouchers(vouchers):
@@ -60,18 +55,11 @@ vouchers = load_vouchers()
 # --- Telegram App ---
 application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# --- Bilder ---
-klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
-gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
-klein_preise = ["Preisliste-klein.jpeg", "Preisliste-klein2.jpeg", "Preisliste-klein3(Haupt).jpeg"]
-gross_preise = ["Preisliste-gross.jpeg", "Preisliste-gross2.jpeg", "Preisliste-gross3.jpeg"]
-
 # --- /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_set.add(update.effective_user.id)
     save_users(users_set)
     keyboard = [
-        [InlineKeyboardButton("Vorschau", callback_data="preview")],
         [InlineKeyboardButton("Preise", callback_data="prices")],
     ]
     await update.message.reply_text("Willkommen! Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -82,33 +70,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     data = q.data
 
-    # Vorschau
-    if data == "preview":
-        keyboard = [
-            [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
-            [InlineKeyboardButton("Große Schwester", callback_data="preview_big")],
-            [InlineKeyboardButton("Zurück", callback_data="back_main")],
-        ]
-        await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif data == "preview_small":
-        bild = random.choice(klein_vorschau)
-        await context.bot.send_photo(q.message.chat_id,
-                                     photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-                                     caption="Kleine Schwester")
-    elif data == "preview_big":
-        bild = random.choice(gross_vorschau)
-        await context.bot.send_photo(q.message.chat_id,
-                                     photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-                                     caption="Große Schwester")
-    elif data == "back_main":
-        keyboard = [
-            [InlineKeyboardButton("Vorschau", callback_data="preview")],
-            [InlineKeyboardButton("Preise", callback_data="prices")],
-        ]
-        await q.edit_message_text("Willkommen! Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    # Preise
-    elif data == "prices":
+    if data == "prices":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
             [InlineKeyboardButton("Große Schwester", callback_data="prices_big")],
@@ -149,7 +111,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
         await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Gutschein
     elif data.startswith("voucher_"):
         parts = data.split("_")
         context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
@@ -225,6 +186,3 @@ async def telegram_webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ok", "note": "Telegram Bot läuft"}
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
