@@ -62,6 +62,9 @@ application = Application.builder().token(BOT_TOKEN).updater(None).build()
 klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
 gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
 
+# --- Globale Variable für letzte Vorschau-Nachricht ---
+last_preview_message = {}
+
 # --- Start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_set.add(update.effective_user.id)
@@ -90,6 +93,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
+    chat_id = q.message.chat_id
+    global last_preview_message, selected_sister, selected_type
 
     # Vorschau
     if data == "preview":
@@ -100,21 +105,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await q.edit_message_text("Wähle eine Schwester für die Vorschau:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif data == "preview_small":
-        bild = random.choice(klein_vorschau)
-        await context.bot.send_photo(
-            chat_id=q.message.chat_id,
-            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-            caption="Kleine Schwester Vorschau"
-        )
+    elif data in ["preview_small", "preview_big"]:
+        # Alte Vorschau löschen
+        if chat_id in last_preview_message:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=last_preview_message[chat_id])
+            except:
+                pass
 
-    elif data == "preview_big":
-        bild = random.choice(gross_vorschau)
-        await context.bot.send_photo(
-            chat_id=q.message.chat_id,
+        bild = random.choice(klein_vorschau if data == "preview_small" else gross_vorschau)
+        caption = "Kleine Schwester Vorschau" if data == "preview_small" else "Große Schwester Vorschau"
+
+        # Sende Bild mit Zurück-Button
+        msg = await context.bot.send_photo(
+            chat_id=chat_id,
             photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-            caption="Große Schwester Vorschau"
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Zurück", callback_data="preview")]])
         )
+        last_preview_message[chat_id] = msg.message_id
 
     # Preise
     elif data == "prices":
@@ -126,7 +135,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data in ["prices_small", "prices_big"]:
-        global selected_sister
         selected_sister = "klein" if data == "prices_small" else "gross"
         keyboard = [
             [InlineKeyboardButton("Bilder", callback_data="type_images")],
@@ -136,7 +144,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Wähle Art des Angebots:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data in ["type_images", "type_videos"]:
-        global selected_type
         selected_type = "bilder" if data == "type_images" else "videos"
 
         offers = []
@@ -164,7 +171,6 @@ async def voucher_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     parts = q.data.split("_")
     context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
-    
     keyboard = [
         [InlineKeyboardButton("Amazon", callback_data="voucher_provider_Amazon")],
         [InlineKeyboardButton("PaySafe", callback_data="voucher_provider_PaySafe")],
