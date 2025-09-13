@@ -24,7 +24,7 @@ PAYPAL_BASE = "https://www.paypal.me/AnnaComfy972"
 ADMIN_PASSWORD = "1974"
 
 # --- Conversation States ---
-START_STEP, ASK_PASSWORD, VOUCHER_PROVIDER, VOUCHER_CODE = range(4)
+ASK_PASSWORD, VOUCHER_PROVIDER, VOUCHER_CODE = range(3)
 
 # --- Nutzer + Gutscheine ---
 USER_FILE = "users.json"
@@ -58,11 +58,11 @@ vouchers = load_vouchers()
 # --- Telegram App ---
 application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# --- Vorschau Bilder ---
+# --- Bilder ---
 klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
 gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
 
-# --- /start Schritt 1 ---
+# --- Start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_set.add(update.effective_user.id)
     save_users(users_set)
@@ -75,9 +75,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     keyboard = [[InlineKeyboardButton("Weiter", callback_data="start_next")]]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    return START_STEP
 
-# --- Start Schritt 2: Vorschau / Preise ---
 async def start_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -86,15 +84,14 @@ async def start_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Preise", callback_data="prices")],
     ]
     await q.edit_message_text("Wähle, was du sehen möchtest:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return ConversationHandler.END
 
-# --- Button Handler für Vorschau / Preise ---
+# --- Vorschau / Preise ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
 
-    # Vorschau Auswahl
+    # Vorschau
     if data == "preview":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
@@ -119,7 +116,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="Große Schwester Vorschau"
         )
 
-    # Preise Auswahl
+    # Preise
     elif data == "prices":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
@@ -161,7 +158,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
         await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Gutschein Flow ---
+# --- Gutschein ---
 async def voucher_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -212,14 +209,13 @@ async def admin_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Handler registrieren ---
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button_handler))
+application.add_handler(CallbackQueryHandler(start_next, pattern="start_next"))
+application.add_handler(CallbackQueryHandler(button_handler, pattern="^(preview|prices|preview_small|preview_big|prices_small|prices_big|type_images|type_videos)$"))
 application.add_handler(CallbackQueryHandler(voucher_start, pattern=r'^voucher_'))
 
 conv = ConversationHandler(
-    entry_points=[CommandHandler('admin', admin_start),
-                  CallbackQueryHandler(voucher_start, pattern=r'^voucher_')],
+    entry_points=[CommandHandler('admin', admin_start)],
     states={
-        START_STEP: [CallbackQueryHandler(start_next, pattern="start_next")],
         ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_password)],
         VOUCHER_PROVIDER: [CallbackQueryHandler(voucher_provider_choice, pattern=r'^voucher_provider_')],
         VOUCHER_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, voucher_code)],
