@@ -2,7 +2,6 @@ import os
 import json
 import random
 from contextlib import asynccontextmanager
-from http import HTTPStatus
 
 from fastapi import FastAPI, Request, Response
 import uvicorn
@@ -18,7 +17,7 @@ from telegram.ext import (
     filters,
 )
 
-# --- Config aus Render Environment Variables ---
+# --- Config aus Environment Variables ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GITHUB_USER = os.getenv("GITHUB_USER")
@@ -61,11 +60,9 @@ vouchers = load_vouchers()
 # --- Telegram App ---
 application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# --- Vorschau Bilder ---
+# --- Bilder ---
 klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
 gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
-
-# --- Preisliste Bilder ---
 klein_preise = ["Preisliste-klein.jpeg", "Preisliste-klein2.jpeg", "Preisliste-klein3(Haupt).jpeg"]
 gross_preise = ["Preisliste-gross.jpeg", "Preisliste-gross2.jpeg", "Preisliste-gross3.jpeg"]
 
@@ -85,7 +82,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     data = q.data
 
-    # Vorschau Flow
+    # Vorschau
     if data == "preview":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
@@ -95,18 +92,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
     elif data == "preview_small":
         bild = random.choice(klein_vorschau)
-        await context.bot.send_photo(
-            chat_id=q.message.chat_id,
-            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-            caption="Kleine Schwester"
-        )
+        await context.bot.send_photo(q.message.chat_id,
+                                     photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+                                     caption="Kleine Schwester")
     elif data == "preview_big":
         bild = random.choice(gross_vorschau)
-        await context.bot.send_photo(
-            chat_id=q.message.chat_id,
-            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-            caption="Große Schwester"
-        )
+        await context.bot.send_photo(q.message.chat_id,
+                                     photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+                                     caption="Große Schwester")
     elif data == "back_main":
         keyboard = [
             [InlineKeyboardButton("Vorschau", callback_data="preview")],
@@ -114,7 +107,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await q.edit_message_text("Willkommen! Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Preise Flow
+    # Preise
     elif data == "prices":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
@@ -137,7 +130,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         global selected_type
         selected_type = "bilder" if data == "type_images" else "videos"
 
-        # Angebot Buttons nach Schwester + Typ
         offers = []
         if selected_type == "videos" and selected_sister == "gross":
             offers = [(10, 15), (25, 25), (35, 30)]
@@ -157,11 +149,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
         await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Gutschein Flow
+    # Gutschein
     elif data.startswith("voucher_"):
         parts = data.split("_")
         context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
-        await context.bot.send_message(chat_id=q.message.chat_id, text="Gib den Anbieter des Gutscheins ein:")
+        await context.bot.send_message(q.message.chat_id, "Gib den Anbieter des Gutscheins ein:")
         return VOUCHER_PROVIDER
 
 # --- Gutschein Handler ---
@@ -197,7 +189,7 @@ async def admin_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Falsches Passwort! Zugriff verweigert.")
     return ConversationHandler.END
 
-# --- Registrieren ---
+# --- Handler registrieren ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
 
@@ -212,7 +204,7 @@ conv = ConversationHandler(
 )
 application.add_handler(conv)
 
-# --- FastAPI Lifespan + Webhook ---
+# --- FastAPI + Webhook ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
