@@ -23,7 +23,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# NEU: Lade das Alter aus den Umgebungsvariablen
+# Lade das Alter aus den Umgebungsvariablen
 AGE_ANNA = os.getenv("AGE_ANNA", "18") # Standardwert "18", falls nicht gesetzt
 AGE_LUNA = os.getenv("AGE_LUNA", "21") # Standardwert "21", falls nicht gesetzt
 
@@ -108,7 +108,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
 
     try:
-        if query.message.text: # Nur bei Textnachrichten bearbeiten
+        if query.message.text:
             await query.edit_message_text(text="⏳ Bearbeite deine Anfrage...")
     except Exception:
         pass
@@ -149,10 +149,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard_buttons = []
 
         if action == "preview":
-            # --- HIER IST DIE ÄNDERUNG ---
-            if schwester_code == 'ks': # Kleine Schwester (Anna)
+            # ##############################################################
+            # HIER IST DIE KORREKTUR: Die Texte sind jetzt richtig zugeordnet
+            # ##############################################################
+            if schwester_code == 'gs': # Große Schwester -> Text von Anna
                 caption = f"Hey ich bin Anna, ich bin {AGE_ANNA} schreib mir gerne für mehr 😏 @Anna_2008_030."
-            else: # Große Schwester (Luna)
+            else: # Kleine Schwester ('ks') -> Text von Luna
                 caption = f"Heyy ich bin Luna ich bin {AGE_LUNA} alt. Wenn du mehr willst schreib meiner Schwester @Anna_2008_030"
             
             keyboard_buttons = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
@@ -183,6 +185,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=InlineKeyboardMarkup(keyboard_buttons)
             )
 
+    # ... der Rest des Codes bleibt unverändert
     elif data.startswith("select_package:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
@@ -213,7 +216,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
     
-    # ... der Rest des Codes bleibt identisch
     elif data.startswith("pay_voucher:"):
         text = "Welchen Gutschein möchtest du einlösen?"
         keyboard = [
