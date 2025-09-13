@@ -3,13 +3,11 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import get_all_vouchers
 
-# Das Admin-Passwort wird aus den Umgebungsvariablen geladen
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "default_password")
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verwaltet den Zugang zum Admin-Bereich."""
     try:
-        # Das Passwort ist das erste Argument nach /admin
         password = context.args[0]
     except (IndexError, ValueError):
         await update.message.reply_text("Bitte gib das Passwort an. Beispiel: /admin meinpasswort")
