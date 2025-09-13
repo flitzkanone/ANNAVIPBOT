@@ -1,50 +1,65 @@
 import os
 import random
 from fastapi import FastAPI, Request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1234")  # Passwort für Admin
+# --- ENV ---
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1234")
+PAYPAL_LINKS = {
+    "10_bilder": "https://paypal.me/deinlink10",
+    "20_bilder": "https://paypal.me/deinlink20",
+    "30_bilder": "https://paypal.me/deinlink30",
+    "10_videos": "https://paypal.me/deinlink10v",
+    "20_videos": "https://paypal.me/deinlink20v",
+    "30_videos": "https://paypal.me/deinlink30v",
+}
 
-# FastAPI-App (Render erwartet die Variable `app`)
-app = FastAPI()
-
-# Telegram-Bot initialisieren
-bot = Bot(token=BOT_TOKEN)
-application = Application.builder().token(BOT_TOKEN).build()
-
-# Beispiel Preisliste-Bilder
+# --- Bilderlisten ---
+vorschau_klein = ["vorschau-klein1.jpg", "vorschau-klein2.jpg"]
+vorschau_gross = ["vorschau-gross1.jpg", "vorschau-gross2.jpg"]
+preisliste_klein = ["preisliste-klein1.jpg", "preisliste-klein2.jpg"]
 preisliste_gross = ["preisliste-gross1.jpg", "preisliste-gross2.jpg", "preisliste-gross3.jpg"]
 
-# Funktion: Start
+# --- FastAPI ---
+app = FastAPI()
+
+# --- Telegram Application ---
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# --- Helper Functions ---
+def create_menu(buttons: list[list[InlineKeyboardButton]]):
+    return InlineKeyboardMarkup(buttons)
+
+# --- Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("Vorschau", callback_data="vorschau")],
         [InlineKeyboardButton("Preise", callback_data="preise")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Willkommen! Wähle eine Option:", reply_markup=reply_markup)
+    if update.message:
+        await update.message.reply_text("Willkommen! Wähle eine Option:", reply_markup=create_menu(keyboard))
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("Willkommen! Wähle eine Option:", reply_markup=create_menu(keyboard))
 
-# Funktion: CallbackQuery Handler
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # Telegram-ack
+    await query.answer()
 
-    # Alte Nachricht löschen
-    if query.message:
-        try:
-            await query.message.delete()
-        except:
-            pass
-
+    # --- Hauptbuttons ---
     if query.data == "vorschau":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="vorschau_klein")],
             [InlineKeyboardButton("Große Schwester", callback_data="vorschau_gross")],
             [InlineKeyboardButton("Zurück", callback_data="start")],
         ]
-        await query.message.reply_text("Wähle eine Vorschau:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Wähle eine Vorschau:", reply_markup=create_menu(keyboard))
 
     elif query.data == "preise":
         keyboard = [
@@ -52,48 +67,82 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Große Schwester", callback_data="preise_gross")],
             [InlineKeyboardButton("Zurück", callback_data="start")],
         ]
-        await query.message.reply_text("Wähle eine Preisliste:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Wähle eine Preisliste:", reply_markup=create_menu(keyboard))
 
-    elif query.data.startswith("preise_gross"):
-        # Zufälliges Bild aus der Preisliste
+    # --- Vorschau ---
+    elif query.data == "vorschau_klein":
+        bild = random.choice(vorschau_klein)
+        keyboard = [[InlineKeyboardButton("Zurück", callback_data="vorschau")]]
+        await query.edit_message_text(f"Hier ist die Vorschau: {bild}", reply_markup=create_menu(keyboard))
+    elif query.data == "vorschau_gross":
+        bild = random.choice(vorschau_gross)
+        keyboard = [[InlineKeyboardButton("Zurück", callback_data="vorschau")]]
+        await query.edit_message_text(f"Hier ist die Vorschau: {bild}", reply_markup=create_menu(keyboard))
+
+    # --- Preisliste ---
+    elif query.data == "preise_klein":
+        bild = random.choice(preisliste_klein)
+        keyboard = [
+            [InlineKeyboardButton("10 Bilder", callback_data="10_bilder")],
+            [InlineKeyboardButton("20 Bilder", callback_data="20_bilder")],
+            [InlineKeyboardButton("30 Bilder", callback_data="30_bilder")],
+            [InlineKeyboardButton("10 Videos", callback_data="10_videos")],
+            [InlineKeyboardButton("20 Videos", callback_data="20_videos")],
+            [InlineKeyboardButton("30 Videos", callback_data="30_videos")],
+            [InlineKeyboardButton("Zurück", callback_data="preise")],
+        ]
+        await query.edit_message_text(f"Preisliste Kleine Schwester: {bild}", reply_markup=create_menu(keyboard))
+
+    elif query.data == "preise_gross":
         bild = random.choice(preisliste_gross)
-        await query.message.reply_text(f"Hier ist die Preisliste: {bild}")
+        keyboard = [
+            [InlineKeyboardButton("10 Bilder", callback_data="10_bilder")],
+            [InlineKeyboardButton("20 Bilder", callback_data="20_bilder")],
+            [InlineKeyboardButton("30 Bilder", callback_data="30_bilder")],
+            [InlineKeyboardButton("10 Videos", callback_data="10_videos")],
+            [InlineKeyboardButton("20 Videos", callback_data="20_videos")],
+            [InlineKeyboardButton("30 Videos", callback_data="30_videos")],
+            [InlineKeyboardButton("Zurück", callback_data="preise")],
+        ]
+        await query.edit_message_text(f"Preisliste Große Schwester: {bild}", reply_markup=create_menu(keyboard))
 
-    elif query.data == "start":
-        await start(update, context)
+    # --- PayPal / Gutscheine ---
+    elif query.data in PAYPAL_LINKS:
+        keyboard = [
+            [InlineKeyboardButton("Mit Gutschein zahlen", callback_data=f"gutschein_{query.data}")],
+            [InlineKeyboardButton("Zurück", callback_data="preise")],
+        ]
+        await query.edit_message_text(f"Hier ist dein PayPal-Link: {PAYPAL_LINKS[query.data]}", reply_markup=create_menu(keyboard))
 
-# Admin-Bereich
+    elif query.data.startswith("gutschein_"):
+        item = query.data.replace("gutschein_", "")
+        keyboard = [
+            [InlineKeyboardButton("Amazon", callback_data=f"gutschein_input_{item}_amazon")],
+            [InlineKeyboardButton("Paysafe", callback_data=f"gutschein_input_{item}_paysafe")],
+            [InlineKeyboardButton("Zurück", callback_data="preise")],
+        ]
+        await query.edit_message_text("Wähle den Anbieter des Gutscheins:", reply_markup=create_menu(keyboard))
+
+# --- Admin ---
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Bitte gib das Admin-Passwort ein: /admin <passwort>")
+    if not context.args or context.args[0] != ADMIN_PASSWORD:
+        await update.message.reply_text("❌ Falsches Passwort oder fehlt!")
         return
-    if context.args[0] == ADMIN_PASSWORD:
-        await update.message.reply_text("✅ Passwort korrekt! Adminbereich geöffnet.")
-        # Beispiel-Daten
-        daten = ["Code1", "Code2", "Code3"]
-        await update.message.reply_text(f"Hier sind die Daten: {', '.join(daten)}")
-    else:
-        await update.message.reply_text("❌ Falsches Passwort!")
+    await update.message.reply_text("✅ Passwort korrekt! Adminbereich geöffnet.")
 
-# Webhook-Route für FastAPI
-@app.post(f"/webhook/{BOT_TOKEN}")
-async def telegram_webhook(req: Request):
-    data = await req.json()
-    update = Update.de_json(data, bot)
-    await application.update_queue.put(update)
-    return {"ok": True}
-
-# Handler registrieren
+# --- Telegram Handler registrieren ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button))
 application.add_handler(CommandHandler("admin", admin))
 
-# Optional: Root-Endpoint für Render Healthchecks
+# --- Webhook für Render ---
+@app.post(f"/webhook/{BOT_TOKEN}")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, application.bot)
+    await application.update_queue.put(update)
+    return {"ok": True}
+
 @app.get("/")
 async def root():
     return {"status": "Bot läuft!"}
-
-# Direkt starten mit Uvicorn, falls lokal getestet
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
