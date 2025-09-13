@@ -1,3 +1,5 @@
 python-telegram-bot[ext]
 python-dotenv
 Flask
+gunicorn
+uvicorn
