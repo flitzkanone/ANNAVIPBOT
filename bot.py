@@ -17,15 +17,20 @@ from telegram.ext import (
 # Lade Umgebungsvariablen für lokale Entwicklung aus .env Datei
 load_dotenv()
 
-# --- Konfiguration aus Umgebungsvariablen ---
+# --- Konfiguration ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Lade das Alter aus den Umgebungsvariablen
-AGE_ANNA = os.getenv("AGE_ANNA", "18") # Standardwert "18", falls nicht gesetzt
-AGE_LUNA = os.getenv("AGE_LUNA", "21") # Standardwert "21", falls nicht gesetzt
+AGE_ANNA = os.getenv("AGE_ANNA", "18")
+AGE_LUNA = os.getenv("AGE_LUNA", "21")
+
+# ##############################################################
+# GEÄNDERT: Admin-Passwort ist jetzt fest im Code hinterlegt
+# ##############################################################
+ADMIN_PASSWORD = "1974"
+# ##############################################################
 
 # Preise sind fest im Code hinterlegt
 PRICES = {
@@ -43,10 +48,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# DEBUG-Log: Zeigt, ob das Admin-Passwort geladen wurde
-logging.info(f"Loaded admin password: '{ADMIN_PASSWORD}'")
-
-
 # --- Hilfsfunktionen ---
 def load_vouchers():
     try:
@@ -62,16 +63,13 @@ def save_vouchers(vouchers):
 def get_media_files(schwester_code: str, media_type: str) -> list:
     matching_files = []
     target_prefix = f"{schwester_code.lower()}_{media_type.lower()}"
-
     if not os.path.isdir(MEDIA_DIR):
         logger.error(f"Media-Verzeichnis '{MEDIA_DIR}' nicht gefunden!")
         return []
-
     for filename in os.listdir(MEDIA_DIR):
         normalized_filename = filename.lower().lstrip('•-_ ').replace(' ', '_')
         if normalized_filename.startswith(target_prefix):
             matching_files.append(os.path.join(MEDIA_DIR, filename))
-            
     return matching_files
 
 # --- Handler-Funktionen ---
@@ -86,7 +84,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -106,16 +103,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     data = query.data
-
     try:
         if query.message.text:
             await query.edit_message_text(text="⏳ Bearbeite deine Anfrage...")
     except Exception:
         pass
-
     if data == "main_menu":
         await start(update, context)
-
     elif data in ["show_preview_options", "show_price_options"]:
         action = "preview" if "preview" in data else "prices"
         text = "Für wen interessierst du dich?"
@@ -127,14 +121,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("« Zurück", callback_data="main_menu")],
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
     elif data.startswith("select_schwester:"):
         _, schwester_code, action = data.split(":")
         media_type = "vorschau" if action == "preview" else "preis"
         image_paths = get_media_files(schwester_code, media_type)
-        
         await query.delete_message()
-
         if not image_paths:
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
@@ -143,22 +134,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
             logger.warning(f"Keine Bilder gefunden für: schwester={schwester_code}, typ={media_type}")
             return
-            
         random_image_path = random.choice(image_paths)
         caption = ""
         keyboard_buttons = []
-
         if action == "preview":
-            # ##############################################################
-            # HIER IST DIE KORREKTUR: Die Texte sind jetzt richtig zugeordnet
-            # ##############################################################
             if schwester_code == 'gs': # Große Schwester -> Text von Anna
                 caption = f"Hey ich bin Anna, ich bin {AGE_ANNA} schreib mir gerne für mehr 😏 @Anna_2008_030."
             else: # Kleine Schwester ('ks') -> Text von Luna
                 caption = f"Heyy ich bin Luna ich bin {AGE_LUNA} alt. Wenn du mehr willst schreib meiner Schwester @Anna_2008_030"
-            
             keyboard_buttons = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
-        
         elif action == "prices":
             caption = "Wähle dein gewünschtes Paket:"
             keyboard_buttons = [
@@ -176,7 +160,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 ],
                 [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
             ]
-
         with open(random_image_path, 'rb') as photo_file:
             await context.bot.send_photo(
                 chat_id=query.message.chat_id,
@@ -184,13 +167,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard_buttons)
             )
-
-    # ... der Rest des Codes bleibt unverändert
     elif data.startswith("select_package:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
         price = PRICES[media_type][amount]
-
         text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
         keyboard = [
             [InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")],
@@ -204,7 +184,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
-
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
@@ -215,7 +194,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 f"➡️ [Hier sicher bezahlen]({paypal_link})")
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
-    
     elif data.startswith("pay_voucher:"):
         text = "Welchen Gutschein möchtest du einlösen?"
         keyboard = [
@@ -224,7 +202,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("« Zurück", callback_data="show_price_options")],
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        
     elif data.startswith("voucher_provider:"):
         _, provider = data.split(":")
         context.user_data["awaiting_voucher"] = provider
@@ -236,11 +213,9 @@ async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE
     if context.user_data.get("awaiting_voucher"):
         provider = context.user_data.pop("awaiting_voucher")
         code = update.message.text
-        
         vouchers = load_vouchers()
         vouchers[provider].append(code)
         save_vouchers(vouchers)
-        
         await update.message.reply_text(
             "Vielen Dank! Dein Gutschein wurde übermittelt und wird geprüft. "
             "Ich melde mich bei dir, sobald er verifiziert ist. ✨"
@@ -250,8 +225,6 @@ async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         password = context.args[0]
-        logger.info(f"Admin command triggered. Provided password: '{password}', Expected password: '{ADMIN_PASSWORD}'")
-
         if password == ADMIN_PASSWORD:
             vouchers = load_vouchers()
             amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"
@@ -271,7 +244,6 @@ def main() -> None:
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_voucher_code))
-
     if WEBHOOK_URL:
         application.run_webhook(
             listen="0.0.0.0",
