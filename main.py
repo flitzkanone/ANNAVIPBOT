@@ -1,31 +1,33 @@
 import os
 import json
 import random
-import asyncio
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
-    ConversationHandler,
     MessageHandler,
-    filters,
+    ConversationHandler,
+    ContextTypes,
+    filters
 )
 
-# --- Config ---
+# --- Config / Env Variables ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GITHUB_USER = os.getenv("GITHUB_USER")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
 PAYPAL_BASE = "https://www.paypal.me/AnnaComfy972"
 ADMIN_PASSWORD = "1974"
 
-USER_FILE = "users.json"
-VOUCHER_FILE = "vouchers.json"
+# --- Conversation States ---
 ASK_PASSWORD, VOUCHER_PROVIDER, VOUCHER_CODE = range(3)
 
-# --- Daten Laden ---
+# --- User + Voucher Data ---
+USER_FILE = "users.json"
+VOUCHER_FILE = "vouchers.json"
+
 def load_users():
     try:
         with open(USER_FILE, "r") as f:
@@ -50,160 +52,133 @@ def save_vouchers(vouchers):
 
 users_set = load_users()
 vouchers = load_vouchers()
-last_message = {}  # letzte Nachricht pro Chat
 
-# --- Bilder ---
+# --- Vorschau Bilder ---
 klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
 gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
 
-# --- Telegram App ---
+# --- Preisliste Bilder ---
+klein_preise = ["Preisliste-klein.jpeg", "Preisliste-klein2.jpeg", "Preisliste-klein3(Haupt).jpeg"]
+gross_preise = ["Preisliste-gross.jpeg", "Preisliste-gross2.jpeg", "Preisliste-gross3.jpeg"]
+
+# --- Telegram Application ---
 application = Application.builder().token(BOT_TOKEN).build()
 
-# --- Helper ---
-async def delete_last(chat_id, context):
-    if chat_id in last_message:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=last_message[chat_id])
-        except:
-            pass
+# --- FastAPI App ---
+app = FastAPI()
 
-# --- Start ---
+# --- /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    users_set.add(chat_id)
+    users_set.add(update.effective_user.id)
     save_users(users_set)
-    await delete_last(chat_id, context)
 
-    text = (
-        "Willkommen! 🛒\n\n"
-        "Hier werden Inhalte von zwei Schwestern verkauft:\n"
-        "• Große Schwester – Level 16\n"
-        "• Kleine Schwester – Level 14\n\n"
-        "Drücke 'Weiter', um fortzufahren."
+    keyboard = [[InlineKeyboardButton("▶ Weiter", callback_data="start_next")]]
+    await update.message.reply_text(
+        "Willkommen!\nHier werden Inhalte von kleinen (14) und großen Schwestern (16) verkauft.\n\nDrücke Weiter, um fortzufahren.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    keyboard = [[InlineKeyboardButton("Weiter", callback_data="start_next")]]
-    msg = await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
 
-async def start_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Button Handler ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    chat_id = q.message.chat_id
-    await delete_last(chat_id, context)
 
-    keyboard = [
-        [InlineKeyboardButton("Vorschau", callback_data="preview")],
-        [InlineKeyboardButton("Preise", callback_data="prices")]
-    ]
-    msg = await q.edit_message_text("Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
+    # Alte Nachricht löschen
+    try:
+        await q.message.delete()
+    except:
+        pass
 
-# --- Vorschau ---
-async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    chat_id = q.message.chat_id
-    await delete_last(chat_id, context)
+    data = q.data
 
-    keyboard = [
-        [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
-        [InlineKeyboardButton("Große Schwester", callback_data="preview_big")],
-        [InlineKeyboardButton("Zurück", callback_data="start_next")]
-    ]
-    msg = await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
+    # Start weiter
+    if data == "start_next":
+        keyboard = [
+            [InlineKeyboardButton("Vorschau", callback_data="preview")],
+            [InlineKeyboardButton("Preise", callback_data="prices")]
+        ]
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def preview_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    chat_id = q.message.chat_id
-    await delete_last(chat_id, context)
+    # Vorschau
+    elif data == "preview":
+        keyboard = [
+            [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
+            [InlineKeyboardButton("Große Schwester", callback_data="preview_big")],
+            [InlineKeyboardButton("⬅ Zurück", callback_data="start_next")]
+        ]
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    bild_list = klein_vorschau if q.data == "preview_small" else gross_vorschau
-    bild = random.choice(bild_list)
-    caption = "Kleine Schwester" if q.data == "preview_small" else "Große Schwester"
+    elif data == "preview_small":
+        bild = random.choice(klein_vorschau)
+        keyboard = [[InlineKeyboardButton("⬅ Zurück", callback_data="preview")]]
+        await context.bot.send_photo(
+            chat_id=q.message.chat_id,
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+            caption="Kleine Schwester",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    elif data == "preview_big":
+        bild = random.choice(gross_vorschau)
+        keyboard = [[InlineKeyboardButton("⬅ Zurück", callback_data="preview")]]
+        await context.bot.send_photo(
+            chat_id=q.message.chat_id,
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+            caption="Große Schwester",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
-    msg = await context.bot.send_photo(
-        chat_id=chat_id,
-        photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
-        caption=caption,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Zurück", callback_data="preview")]])
-    )
-    last_message[chat_id] = msg.message_id
+    # Preise
+    elif data == "prices":
+        keyboard = [
+            [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
+            [InlineKeyboardButton("Große Schwester", callback_data="prices_big")],
+            [InlineKeyboardButton("⬅ Zurück", callback_data="start_next")]
+        ]
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Preise & Gutschein ---
-async def prices_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    chat_id = q.message.chat_id
-    await delete_last(chat_id, context)
+    elif data in ["prices_small", "prices_big"]:
+        context.user_data["selected_sister"] = "klein" if data=="prices_small" else "gross"
+        keyboard = [
+            [InlineKeyboardButton("Bilder", callback_data="type_images")],
+            [InlineKeyboardButton("Videos", callback_data="type_videos")],
+            [InlineKeyboardButton("⬅ Zurück", callback_data="prices")]
+        ]
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Wähle Art des Angebots:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    keyboard = [
-        [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
-        [InlineKeyboardButton("Große Schwester", callback_data="prices_big")],
-        [InlineKeyboardButton("Zurück", callback_data="start_next")]
-    ]
-    msg = await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
+    elif data in ["type_images", "type_videos"]:
+        sister = context.user_data["selected_sister"]
+        typ = "bilder" if data=="type_images" else "videos"
 
-# Preise auswählen
-async def offer_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    chat_id = q.message.chat_id
-    global selected_sister
-    selected_sister = "klein" if q.data == "prices_small" else "gross"
-    await delete_last(chat_id, context)
+        # Angebote
+        offers = []
+        if typ=="videos" and sister=="gross": offers = [(10,15),(25,25),(35,30)]
+        elif typ=="videos" and sister=="klein": offers = [(10,20),(25,30),(35,40)]
+        elif typ=="bilder" and sister=="gross": offers = [(10,5),(25,10),(35,15)]
+        elif typ=="bilder" and sister=="klein": offers = [(10,10),(25,15),(35,20)]
 
-    keyboard = [
-        [InlineKeyboardButton("Bilder", callback_data="type_images")],
-        [InlineKeyboardButton("Videos", callback_data="type_videos")],
-        [InlineKeyboardButton("Zurück", callback_data="prices")]
-    ]
-    msg = await q.edit_message_text("Wähle Art des Angebots:", reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
+        keyboard = [[InlineKeyboardButton(f"PayPal {p}€", url=f"{PAYPAL_BASE}/{p}"),
+                     InlineKeyboardButton("Mit Gutschein", callback_data=f"voucher_{sister}_{typ}_{a}")]
+                    for a,p in offers]
+        keyboard.append([InlineKeyboardButton("⬅ Zurück", callback_data="prices_"+sister)])
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Angebot Buttons
-async def offer_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    chat_id = q.message.chat_id
-    global selected_type
-    selected_type = "bilder" if q.data == "type_images" else "videos"
-    await delete_last(chat_id, context)
+    elif data.startswith("voucher_"):
+        parts = data.split("_")
+        context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
+        await context.bot.send_message(chat_id=q.message.chat_id, text="Gib den Anbieter des Gutscheins ein: ⏳")
+        return VOUCHER_PROVIDER
 
-    offers = []
-    if selected_type == "videos" and selected_sister == "gross":
-        offers = [(10, 15), (25, 25), (35, 30)]
-    elif selected_type == "videos" and selected_sister == "klein":
-        offers = [(10, 20), (25, 30), (35, 40)]
-    elif selected_type == "bilder" and selected_sister == "gross":
-        offers = [(10, 5), (25, 10), (35, 15)]
-    elif selected_type == "bilder" and selected_sister == "klein":
-        offers = [(10, 10), (25, 15), (35, 20)]
-
-    keyboard = []
-    for amount, price in offers:
-        keyboard.append([
-            InlineKeyboardButton(f"PayPal {price}€", url=f"{PAYPAL_BASE}/{price}"),
-            InlineKeyboardButton("Mit Gutschein", callback_data=f"voucher_{selected_sister}_{selected_type}_{amount}")
-        ])
-    keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
-    msg = await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
-    last_message[chat_id] = msg.message_id
-
-# Gutschein Flow
+# --- Gutschein Flow ---
 async def voucher_provider(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["voucher_info"]["provider"] = update.message.text
-    await update.message.reply_text("Gib den Gutscheincode ein:")
+    await update.message.reply_text("Gib den Gutscheincode ein: ⏳")
     return VOUCHER_CODE
 
 async def voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = context.user_data["voucher_info"]
     provider = info["provider"]
     code = update.message.text
-    if provider not in vouchers:
-        vouchers[provider] = []
+    if provider not in vouchers: vouchers[provider] = []
     vouchers[provider].append(code)
     save_vouchers(vouchers)
     await update.message.reply_text("✅ Gutschein gespeichert!")
@@ -211,35 +186,23 @@ async def voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Admin ---
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    await delete_last(chat_id, context)
-    await update.message.reply_text("🔒 Bitte gib das Admin-Passwort ein:")
+    await update.message.reply_text("Bitte gib das Admin-Passwort ein:")
     return ASK_PASSWORD
 
 async def admin_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
     if update.message.text == ADMIN_PASSWORD:
-        temp_msg = await update.message.reply_text("⏳ Lade Daten…")
-        await asyncio.sleep(1)
-        await delete_last(chat_id, context)
-        msg = f"📊 Admin-Daten:\nBenutzer insgesamt: {len(users_set)}\nGutscheine:\n"
+        count = len(users_set)
+        msg = f"✅ Passwort korrekt!\nDer Bot hat bisher mit {count} Nutzern interagiert.\n\nGespeicherte Gutscheine:\n"
         for provider, codes in vouchers.items():
-            msg += f"- {provider}: {', '.join(codes)}\n"
+            msg += f"{provider}: {', '.join(codes)}\n"
         await update.message.reply_text(msg)
     else:
-        await update.message.reply_text("❌ Falsches Passwort! Zugriff verweigert.")
+        await update.message.reply_text("❌ Falsches Passwort!")
     return ConversationHandler.END
 
-# --- Handlers ---
+# --- Registrieren ---
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(start_next, pattern="^start_next$"))
-application.add_handler(CallbackQueryHandler(preview, pattern="^preview$"))
-application.add_handler(CallbackQueryHandler(preview_show, pattern="^preview_(small|big)$"))
-application.add_handler(CallbackQueryHandler(prices_menu, pattern="^prices$"))
-application.add_handler(CallbackQueryHandler(offer_type, pattern="^prices_(small|big)$"))
-application.add_handler(CallbackQueryHandler(offer_select, pattern="^type_(images|videos)$"))
-
-conv_admin = ConversationHandler(
+conv = ConversationHandler(
     entry_points=[CommandHandler('admin', admin_start)],
     states={
         ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_password)],
@@ -248,11 +211,10 @@ conv_admin = ConversationHandler(
     },
     fallbacks=[]
 )
-application.add_handler(conv_admin)
+application.add_handler(conv)
+application.add_handler(CallbackQueryHandler(button_handler))
 
-# --- FastAPI für Webhook ---
-app = FastAPI()
-
+# --- FastAPI Webhook ---
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     data = await req.json()
@@ -264,7 +226,7 @@ async def telegram_webhook(req: Request):
 async def on_startup():
     await application.initialize()
     await application.start()
-    await application.bot.set_webhook(url=os.getenv("WEBHOOK_URL"))
+    await application.bot.set_webhook(url=WEBHOOK_URL)
 
 @app.on_event("shutdown")
 async def on_shutdown():
