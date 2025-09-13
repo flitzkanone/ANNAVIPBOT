@@ -21,16 +21,11 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Lade das Alter aus den Umgebungsvariablen
 AGE_ANNA = os.getenv("AGE_ANNA", "18")
 AGE_LUNA = os.getenv("AGE_LUNA", "21")
 
-# ##############################################################
-# GEÄNDERT: Admin-Passwort ist jetzt fest im Code hinterlegt
-# ##############################################################
+# Admin-Passwort ist fest im Code hinterlegt
 ADMIN_PASSWORD = "1974"
-# ##############################################################
 
 # Preise sind fest im Code hinterlegt
 PRICES = {
@@ -48,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Hilfsfunktionen ---
+# --- Hilfsfunktionen (unverändert) ---
 def load_vouchers():
     try:
         with open(VOUCHER_FILE, "r") as f:
@@ -74,6 +69,9 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
 
 # --- Handler-Funktionen ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Setzt den Nutzer-Zustand zurück, falls er z.B. bei der Passworteingabe war
+    context.user_data.clear()
+    
     welcome_text = (
         "Herzlich Willkommen! ✨\n\n"
         "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
@@ -99,6 +97,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
+# ... (handle_callback_query bleibt größtenteils gleich) ...
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -132,15 +131,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 text="Ups! Ich konnte gerade keine passenden Inhalte finden. Bitte versuche es später erneut.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])
             )
-            logger.warning(f"Keine Bilder gefunden für: schwester={schwester_code}, typ={media_type}")
             return
         random_image_path = random.choice(image_paths)
         caption = ""
         keyboard_buttons = []
         if action == "preview":
-            if schwester_code == 'gs': # Große Schwester -> Text von Anna
+            if schwester_code == 'gs':
                 caption = f"Hey ich bin Anna, ich bin {AGE_ANNA} schreib mir gerne für mehr 😏 @Anna_2008_030."
-            else: # Kleine Schwester ('ks') -> Text von Luna
+            else:
                 caption = f"Heyy ich bin Luna ich bin {AGE_LUNA} alt. Wenn du mehr willst schreib meiner Schwester @Anna_2008_030"
             keyboard_buttons = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         elif action == "prices":
@@ -209,22 +207,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context.user_data.get("awaiting_voucher"):
-        provider = context.user_data.pop("awaiting_voucher")
-        code = update.message.text
-        vouchers = load_vouchers()
-        vouchers[provider].append(code)
-        save_vouchers(vouchers)
-        await update.message.reply_text(
-            "Vielen Dank! Dein Gutschein wurde übermittelt und wird geprüft. "
-            "Ich melde mich bei dir, sobald er verifiziert ist. ✨"
-        )
-        await start(update, context)
+# ##############################################################
+# GEÄNDERT: Neue Funktion, die auf Texteingaben reagiert
+# ##############################################################
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bearbeitet Texteingaben für verschiedene Zustände (Admin-Login, Gutschein)."""
+    
+    # Zustand 1: Bot wartet auf das Admin-Passwort
+    if context.user_data.get("awaiting_admin_password"):
+        password = update.message.text
+        # Wichtig: Zustand sofort zurücksetzen, egal ob Passwort richtig oder falsch war
+        del context.user_data["awaiting_admin_password"]
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        password = context.args[0]
         if password == ADMIN_PASSWORD:
             vouchers = load_vouchers()
             amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"
@@ -235,15 +229,45 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(text, parse_mode='Markdown')
         else:
             await update.message.reply_text("Falsches Passwort.")
-    except (IndexError, ValueError):
-        await update.message.reply_text("Bitte gib das Passwort an: /admin <passwort>")
+
+    # Zustand 2: Bot wartet auf einen Gutscheincode
+    elif context.user_data.get("awaiting_voucher"):
+        provider = context.user_data.pop("awaiting_voucher")
+        code = update.message.text
+        
+        vouchers = load_vouchers()
+        vouchers[provider].append(code)
+        save_vouchers(vouchers)
+        
+        await update.message.reply_text(
+            "Vielen Dank! Dein Gutschein wurde übermittelt und wird geprüft. "
+            "Ich melde mich bei dir, sobald er verifiziert ist. ✨"
+        )
+        # Nach erfolgreicher Eingabe zurück zum Startmenü
+        await start(update, context)
+
+# ##############################################################
+# GEÄNDERT: Die /admin Funktion startet nur noch den Login-Prozess
+# ##############################################################
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Startet den Admin-Login, indem der Bot nach dem Passwort fragt."""
+    context.user_data["awaiting_admin_password"] = True
+    await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
+
 
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Befehle
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
+    
+    # Button-Klicks
     application.add_handler(CallbackQueryHandler(handle_callback_query))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_voucher_code))
+    
+    # Texteingaben (reagiert jetzt auf Admin-Passwort UND Gutscheine)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    
     if WEBHOOK_URL:
         application.run_webhook(
             listen="0.0.0.0",
