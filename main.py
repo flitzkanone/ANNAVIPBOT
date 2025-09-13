@@ -18,9 +18,11 @@ from telegram.ext import (
     filters,
 )
 
-# --- Config ---
+# --- Config aus Render Environment Variables ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+GITHUB_USER = os.getenv("GITHUB_USER")
+GITHUB_REPO = os.getenv("GITHUB_REPO")
 PAYPAL_BASE = "https://www.paypal.me/AnnaComfy972"
 ADMIN_PASSWORD = "1974"
 
@@ -95,14 +97,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bild = random.choice(klein_vorschau)
         await context.bot.send_photo(
             chat_id=q.message.chat_id,
-            photo=f"https://raw.githubusercontent.com/<USERNAME>/<REPO>/main/image/{bild}",
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
             caption="Kleine Schwester"
         )
     elif data == "preview_big":
         bild = random.choice(gross_vorschau)
         await context.bot.send_photo(
             chat_id=q.message.chat_id,
-            photo=f"https://raw.githubusercontent.com/<USERNAME>/<REPO>/main/image/{bild}",
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
             caption="Große Schwester"
         )
     elif data == "back_main":
@@ -213,24 +215,4 @@ application.add_handler(conv)
 # --- FastAPI Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-    async with application:
-        await application.start()
-        yield
-        await application.stop()
-
-app = FastAPI(lifespan=lifespan)
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    body = await request.json()
-    update = Update.de_json(body, application.bot)
-    await application.process_update(update)
-    return Response(status_code=HTTPStatus.OK)
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "note": "Telegram Bot läuft"}
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    await application.bot.set_webhook(url=f
