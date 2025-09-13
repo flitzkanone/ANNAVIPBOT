@@ -23,19 +23,22 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Preise dynamisch laden
+# ##############################################################
+# GEÄNDERT: Preise sind jetzt fest im Code hinterlegt
+# ##############################################################
 PRICES = {
     "bilder": {
-        10: os.getenv("PRICE_10_BILDER"),
-        25: os.getenv("PRICE_25_BILDER"),
-        35: os.getenv("PRICE_35_BILDER"),
+        10: 5,    # 10 Bilder für 5€
+        25: 10,   # 25 Bilder für 10€
+        35: 15,   # 35 Bilder für 15€
     },
     "videos": {
-        10: os.getenv("PRICE_10_VIDEOS"),
-        25: os.getenv("PRICE_25_VIDEOS"),
-        35: os.getenv("PRICE_35_VIDEOS"),
+        10: 15,   # 10 Videos für 15€
+        25: 25,   # 25 Videos für 25€
+        35: 30,   # 35 Videos für 30€
     },
 }
+# ##############################################################
 
 # --- Pfad-Definitionen ---
 VOUCHER_FILE = "vouchers.json"
@@ -46,6 +49,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# DEBUG-Log: Zeigt, ob das Admin-Passwort geladen wurde
+logging.info(f"Loaded admin password: '{ADMIN_PASSWORD}'")
+
 
 # --- Hilfsfunktionen ---
 def load_vouchers():
@@ -79,7 +86,6 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
 
 # --- Handler-Funktionen ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sendet die Startnachricht und das Hauptmenü."""
     welcome_text = (
         "Herzlich Willkommen! ✨\n\n"
         "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
@@ -107,7 +113,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Verarbeitet alle Button-Klicks."""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -181,24 +186,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=InlineKeyboardMarkup(keyboard_buttons)
             )
 
-    # ##############################################################
-    # HIER IST DIE WICHTIGE ÄNDERUNG
-    # ##############################################################
     elif data.startswith("select_package:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
         price = PRICES[media_type][amount]
-
-        # Prüfen, ob der Preis korrekt geladen wurde
-        if price is None:
-            logger.error(f"Preis für Paket {amount} {media_type} nicht in den ENV-Variablen gefunden!")
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="Ups, für dieses Paket ist momentan kein Preis hinterlegt. Bitte wähle ein anderes."
-            )
-            # Alte Nachricht trotzdem löschen
-            await query.message.delete()
-            return
 
         text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
         keyboard = [
@@ -206,19 +197,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")],
             [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
         ]
-
-        # KORREKTUR: Alte Fotonachricht löschen
         await query.message.delete()
-        # KORREKTUR: Neue Textnachricht senden
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
-    # ##############################################################
-    # ENDE DER ÄNDERUNG
-    # ##############################################################
 
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":")
@@ -265,6 +250,9 @@ async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         password = context.args[0]
+        # DEBUG-Log: Vergleicht das eingegebene mit dem erwarteten Passwort
+        logger.info(f"Admin command triggered. Provided password: '{password}', Expected password: '{ADMIN_PASSWORD}'")
+
         if password == ADMIN_PASSWORD:
             vouchers = load_vouchers()
             amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"
@@ -280,7 +268,6 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
