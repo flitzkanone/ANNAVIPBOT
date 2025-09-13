@@ -1,5 +1,6 @@
 import os
 import json
+import random
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -17,11 +18,13 @@ from telegram.ext import (
 # --- Config ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+GITHUB_USER = os.getenv("GITHUB_USER")
+GITHUB_REPO = os.getenv("GITHUB_REPO")
 PAYPAL_BASE = "https://www.paypal.me/AnnaComfy972"
 ADMIN_PASSWORD = "1974"
 
 # --- Conversation States ---
-ASK_PASSWORD, VOUCHER_PROVIDER, VOUCHER_CODE = range(3)
+START_STEP, ASK_PASSWORD, VOUCHER_PROVIDER, VOUCHER_CODE = range(4)
 
 # --- Nutzer + Gutscheine ---
 USER_FILE = "users.json"
@@ -55,27 +58,73 @@ vouchers = load_vouchers()
 # --- Telegram App ---
 application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# --- /start ---
+# --- Vorschau Bilder ---
+klein_vorschau = ["Vorschau-klein.png", "Vorschau-klein2.png"]
+gross_vorschau = ["Vorschau-gross.jpeg", "Vorschau-gross2.jpeg", "Vorschau-gross3.jpeg"]
+
+# --- /start Schritt 1 ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_set.add(update.effective_user.id)
     save_users(users_set)
+    text = (
+        "Willkommen! 🛒\n\n"
+        "Hier werden Inhalte von zwei Schwestern verkauft:\n"
+        "• Große Schwester – Level 16\n"
+        "• Kleine Schwester – Level 14\n\n"
+        "Drücke 'Weiter', um fortzufahren."
+    )
+    keyboard = [[InlineKeyboardButton("Weiter", callback_data="start_next")]]
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return START_STEP
+
+# --- Start Schritt 2: Vorschau / Preise ---
+async def start_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
     keyboard = [
+        [InlineKeyboardButton("Vorschau", callback_data="preview")],
         [InlineKeyboardButton("Preise", callback_data="prices")],
     ]
-    await update.message.reply_text("Willkommen! Wähle:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await q.edit_message_text("Wähle, was du sehen möchtest:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ConversationHandler.END
 
-# --- Button Handler ---
+# --- Button Handler für Vorschau / Preise / Gutschein ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
 
-    # Start-Buttons
-    if data == "prices":
+    # Vorschau Auswahl
+    if data == "preview":
+        keyboard = [
+            [InlineKeyboardButton("Kleine Schwester", callback_data="preview_small")],
+            [InlineKeyboardButton("Große Schwester", callback_data="preview_big")],
+            [InlineKeyboardButton("Zurück", callback_data="start_next")],
+        ]
+        await q.edit_message_text("Wähle eine Schwester für die Vorschau:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "preview_small":
+        bild = random.choice(klein_vorschau)
+        await context.bot.send_photo(
+            chat_id=q.message.chat_id,
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+            caption="Kleine Schwester Vorschau"
+        )
+
+    elif data == "preview_big":
+        bild = random.choice(gross_vorschau)
+        await context.bot.send_photo(
+            chat_id=q.message.chat_id,
+            photo=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/image/{bild}",
+            caption="Große Schwester Vorschau"
+        )
+
+    # Preise Auswahl
+    elif data == "prices":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
             [InlineKeyboardButton("Große Schwester", callback_data="prices_big")],
-            [InlineKeyboardButton("Zurück", callback_data="back_main")],
+            [InlineKeyboardButton("Zurück", callback_data="start_next")],
         ]
         await q.edit_message_text("Wähle eine Schwester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -93,7 +142,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         global selected_type
         selected_type = "bilder" if data == "type_images" else "videos"
 
-        # Angebot Buttons
         offers = []
         if selected_type == "videos" and selected_sister == "gross":
             offers = [(10, 15), (25, 25), (35, 30)]
@@ -113,7 +161,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
         await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Gutschein Flow (Buttons für Anbieter) ---
+# --- Gutschein Flow ---
 async def voucher_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -127,7 +175,6 @@ async def voucher_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("Wähle den Anbieter des Gutscheins:", reply_markup=InlineKeyboardMarkup(keyboard))
     return VOUCHER_PROVIDER
 
-# --- Anbieter gewählt ---
 async def voucher_provider_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -136,7 +183,6 @@ async def voucher_provider_choice(update: Update, context: ContextTypes.DEFAULT_
     await context.bot.send_message(q.message.chat_id, f"Gib jetzt den Gutscheincode für {provider} ein:")
     return VOUCHER_CODE
 
-# --- Gutscheincode speichern ---
 async def voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = context.user_data["voucher_info"]
     provider = info["provider"]
@@ -170,8 +216,10 @@ application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(CallbackQueryHandler(voucher_start, pattern=r'^voucher_'))
 
 conv = ConversationHandler(
-    entry_points=[CommandHandler('admin', admin_start)],
+    entry_points=[CommandHandler('admin', admin_start),
+                  CallbackQueryHandler(voucher_start, pattern=r'^voucher_')],
     states={
+        START_STEP: [CallbackQueryHandler(start_next, pattern="start_next")],
         ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_password)],
         VOUCHER_PROVIDER: [CallbackQueryHandler(voucher_provider_choice, pattern=r'^voucher_provider_')],
         VOUCHER_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, voucher_code)],
@@ -195,9 +243,9 @@ app = FastAPI(lifespan=lifespan)
 async def telegram_webhook(request: Request):
     body = await request.json()
     update = Update.de_json(body, application.bot)
-    await application.process_update(update)
+    await application.update_queue.put(update)
     return Response(status_code=200)
 
-@app.get("/")
-async def root():
-    return {"status": "ok", "note": "Telegram Bot läuft"}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
