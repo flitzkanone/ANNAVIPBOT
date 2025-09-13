@@ -24,15 +24,12 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 AGE_ANNA = os.getenv("AGE_ANNA", "18")
 AGE_LUNA = os.getenv("AGE_LUNA", "21")
 
-# Admin-Passwort ist fest im Code hinterlegt
-ADMIN_PASSWORD = "1974"
+# NEU: Lade deine Admin User ID. Nur diese ID kann /addvoucher nutzen.
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 
-# ##############################################################
-# NEU: Krypto-Wallet Adressen
-# ##############################################################
+ADMIN_PASSWORD = "1974"
 BTC_WALLET = "1FcgMLNBDLiuDSDip7AStuP19sq47LJB12"
 ETH_WALLET = "0xeeb8FDc4aAe71B53934318707d0e9747C5c66f6e"
-# ##############################################################
 
 # Preise sind fest im Code hinterlegt
 PRICES = {
@@ -40,11 +37,9 @@ PRICES = {
     "videos": { 10: 15, 25: 25, 35: 30 },
 }
 
-# --- Pfad-Definitionen ---
 VOUCHER_FILE = "vouchers.json"
 MEDIA_DIR = "image"
 
-# --- Logging einrichten ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -75,6 +70,92 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
     return matching_files
 
 # --- Handler-Funktionen ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.clear()
+    welcome_text = "..." # (Code gekürzt, da unverändert)
+    keyboard = [
+        [InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")],
+        [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")],
+    ]
+    # ... (Rest der Funktion ist unverändert)
+    
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # ... (Diese riesige Funktion ist komplett unverändert)
+    pass # In der finalen Version ist der Code natürlich hier
+
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # ... (Diese Funktion ist auch unverändert)
+    pass
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["awaiting_admin_password"] = True
+    await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
+
+# ##############################################################
+# NEU: Funktion zum manuellen Hinzufügen von Gutscheinen
+# ##############################################################
+async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fügt einen Gutscheincode manuell zur Liste hinzu. Nur für den Admin."""
+    user_id = str(update.effective_user.id)
+
+    # 1. Sicherheitscheck: Ist der Nutzer der Admin?
+    if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl.")
+        return
+
+    # 2. Input-Check: Wurden Anbieter und Code mitgegeben?
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "⚠️ Bitte gib den Befehl im richtigen Format an:\n"
+            "`/addvoucher <anbieter> <code...>`\n\n"
+            "Beispiele:\n"
+            "`/addvoucher amazon ABCD-1234-EFGH`\n"
+            "`/addvoucher paysafe 0123 4567 8910 1112`",
+            parse_mode='Markdown'
+        )
+        return
+
+    # 3. Anbieter validieren
+    provider = context.args[0].lower()
+    if provider not in ["amazon", "paysafe"]:
+        await update.message.reply_text("Fehler: Anbieter muss 'amazon' oder 'paysafe' sein.")
+        return
+        
+    # 4. Code zusammensetzen (falls er Leerzeichen enthält)
+    code = " ".join(context.args[1:])
+
+    # 5. Speichern
+    vouchers = load_vouchers()
+    vouchers[provider].append(code)
+    save_vouchers(vouchers)
+    
+    await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** erfolgreich hinzugefügt:\n`{code}`", parse_mode='Markdown')
+
+
+def main() -> None:
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Befehle registrieren
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("admin", admin))
+    application.add_handler(CommandHandler("addvoucher", add_voucher)) # NEUER BEFEHL
+    
+    # Andere Handler
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    
+    # Start des Bots
+    if WEBHOOK_URL:
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get('PORT', 8443)),
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        )
+    else:
+        application.run_polling()
+
+# --- (Platzhalter für die langen, unveränderten Funktionen, um es hier übersichtlich zu halten) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     welcome_text = (
@@ -147,88 +228,35 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard_buttons = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         elif action == "prices":
             caption = "Wähle dein gewünschtes Paket:"
-            keyboard_buttons = [
-                [
-                    InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"),
-                    InlineKeyboardButton("10 Videos", callback_data=f"select_package:videos:10"),
-                ],
-                [
-                    InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"),
-                    InlineKeyboardButton("25 Videos", callback_data=f"select_package:videos:25"),
-                ],
-                [
-                    InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"),
-                    InlineKeyboardButton("35 Videos", callback_data=f"select_package:videos:35"),
-                ],
-                [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
-            ]
+            keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data=f"select_package:videos:10")],[InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data=f"select_package:videos:25")],[InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data=f"select_package:videos:35")],[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         with open(random_image_path, 'rb') as photo_file:
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=photo_file,
-                caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard_buttons)
-            )
+            await context.bot.send_photo(chat_id=query.message.chat_id, photo=photo_file, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     elif data.startswith("select_package:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
         price = PRICES[media_type][amount]
         text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
-        # --- GEÄNDERT: Neuer Krypto-Button ---
-        keyboard = [
-            [InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")],
-            [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")],
-            [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")],
-            [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
-        ]
+        keyboard = [[InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.message.delete()
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    
-    # ##############################################################
-    # NEU: Handler für Krypto-Auswahl
-    # ##############################################################
+        await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data.startswith("pay_crypto:"):
         _, media_type, amount = data.split(":")
         text = "Bitte wähle die gewünschte Kryptowährung:"
-        keyboard = [
-            [
-                InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"),
-                InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")
-            ],
-            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]
-        ]
+        keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
     elif data.startswith("show_wallet:"):
         _, crypto_type, media_type, amount_str = data.split(":")
         amount = int(amount_str)
         price = PRICES[media_type][amount]
-
-        wallet_address = ""
-        crypto_name = ""
-        if crypto_type == "btc":
-            wallet_address = BTC_WALLET
-            crypto_name = "Bitcoin (BTC)"
-        else: # eth
-            wallet_address = ETH_WALLET
-            crypto_name = "Ethereum (ETH)"
-
-        text = (
-            f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n"
-            f"1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n"
-            f"_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n"
-            f"2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n"
-            f"3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann."
-        )
+        wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET
+        crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
+        text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n"
+                f"1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n"
+                f"_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n"
+                f"2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n"
+                f"3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann.")
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    # ##############################################################
-    
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
@@ -240,15 +268,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
     elif data.startswith("pay_voucher:"):
+        _, media_type, amount_str = data.split(":")
         text = "Welchen Gutschein möchtest du einlösen?"
-        keyboard = [
-            [InlineKeyboardButton("Amazon", callback_data="voucher_provider:amazon"),
-             InlineKeyboardButton("Paysafe", callback_data="voucher_provider:paysafe")],
-            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:bilder:10")] # Dummy-Daten, da sie nicht verwendet werden
-        ]
+        keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon:{media_type}:{amount_str}"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe:{media_type}:{amount_str}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     elif data.startswith("voucher_provider:"):
-        _, provider = data.split(":")
+        _, provider, media_type, amount_str = data.split(":")
         context.user_data["awaiting_voucher"] = provider
         text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutscheincode als einzelne Nachricht."
         keyboard = [[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]
@@ -279,28 +304,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Ich melde mich bei dir, sobald er verifiziert ist. ✨"
         )
         await start(update, context)
-
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    context.user_data["awaiting_admin_password"] = True
-    await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
-
-def main() -> None:
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin))
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    if WEBHOOK_URL:
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get('PORT', 8443)),
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
-        logger.info(f"Bot started in webhook mode on {WEBHOOK_URL}")
-    else:
-        application.run_polling()
-        logger.info("Bot started in polling mode for local development")
 
 if __name__ == "__main__":
     main()
