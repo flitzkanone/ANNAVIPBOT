@@ -1,2 +1,0 @@
-python-telegram-bot[ext]>=20.0
-python-dotenv
