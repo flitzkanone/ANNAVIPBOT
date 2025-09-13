@@ -88,7 +88,7 @@ async def start_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("Wähle, was du sehen möchtest:", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
-# --- Button Handler für Vorschau / Preise / Gutschein ---
+# --- Button Handler für Vorschau / Preise ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
