@@ -23,22 +23,15 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# ##############################################################
-# GEÄNDERT: Preise sind jetzt fest im Code hinterlegt
-# ##############################################################
+# NEU: Lade das Alter aus den Umgebungsvariablen
+AGE_ANNA = os.getenv("AGE_ANNA", "18") # Standardwert "18", falls nicht gesetzt
+AGE_LUNA = os.getenv("AGE_LUNA", "21") # Standardwert "21", falls nicht gesetzt
+
+# Preise sind fest im Code hinterlegt
 PRICES = {
-    "bilder": {
-        10: 5,    # 10 Bilder für 5€
-        25: 10,   # 25 Bilder für 10€
-        35: 15,   # 35 Bilder für 15€
-    },
-    "videos": {
-        10: 15,   # 10 Videos für 15€
-        25: 25,   # 25 Videos für 25€
-        35: 30,   # 35 Videos für 30€
-    },
+    "bilder": { 10: 5, 25: 10, 35: 15 },
+    "videos": { 10: 15, 25: 25, 35: 30 },
 }
-# ##############################################################
 
 # --- Pfad-Definitionen ---
 VOUCHER_FILE = "vouchers.json"
@@ -56,7 +49,6 @@ logging.info(f"Loaded admin password: '{ADMIN_PASSWORD}'")
 
 # --- Hilfsfunktionen ---
 def load_vouchers():
-    """Lädt Gutscheine aus der JSON-Datei."""
     try:
         with open(VOUCHER_FILE, "r") as f:
             return json.load(f)
@@ -64,12 +56,10 @@ def load_vouchers():
         return {"amazon": [], "paysafe": []}
 
 def save_vouchers(vouchers):
-    """Speichert Gutscheine in die JSON-Datei."""
     with open(VOUCHER_FILE, "w") as f:
         json.dump(vouchers, f, indent=2)
 
 def get_media_files(schwester_code: str, media_type: str) -> list:
-    """Sucht im MEDIA_DIR robust nach passenden Bildern."""
     matching_files = []
     target_prefix = f"{schwester_code.lower()}_{media_type.lower()}"
 
@@ -118,7 +108,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
 
     try:
-        await query.edit_message_text(text="⏳ Bearbeite deine Anfrage...")
+        if query.message.text: # Nur bei Textnachrichten bearbeiten
+            await query.edit_message_text(text="⏳ Bearbeite deine Anfrage...")
     except Exception:
         pass
 
@@ -154,10 +145,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
             
         random_image_path = random.choice(image_paths)
+        caption = ""
         keyboard_buttons = []
 
         if action == "preview":
-            caption = "Hier ist eine zufällige Vorschau."
+            # --- HIER IST DIE ÄNDERUNG ---
+            if schwester_code == 'ks': # Kleine Schwester (Anna)
+                caption = f"Hey ich bin Anna, ich bin {AGE_ANNA} schreib mir gerne für mehr 😏 @Anna_2008_030."
+            else: # Große Schwester (Luna)
+                caption = f"Heyy ich bin Luna ich bin {AGE_LUNA} alt. Wenn du mehr willst schreib meiner Schwester @Anna_2008_030"
+            
             keyboard_buttons = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         
         elif action == "prices":
@@ -215,7 +212,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 f"➡️ [Hier sicher bezahlen]({paypal_link})")
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
-
+    
+    # ... der Rest des Codes bleibt identisch
     elif data.startswith("pay_voucher:"):
         text = "Welchen Gutschein möchtest du einlösen?"
         keyboard = [
@@ -250,7 +248,6 @@ async def handle_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         password = context.args[0]
-        # DEBUG-Log: Vergleicht das eingegebene mit dem erwarteten Passwort
         logger.info(f"Admin command triggered. Provided password: '{password}', Expected password: '{ADMIN_PASSWORD}'")
 
         if password == ADMIN_PASSWORD:
