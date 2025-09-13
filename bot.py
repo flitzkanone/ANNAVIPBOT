@@ -27,6 +27,13 @@ AGE_LUNA = os.getenv("AGE_LUNA", "21")
 # Admin-Passwort ist fest im Code hinterlegt
 ADMIN_PASSWORD = "1974"
 
+# ##############################################################
+# NEU: Krypto-Wallet Adressen
+# ##############################################################
+BTC_WALLET = "1FcgMLNBDLiuDSDip7AStuP19sq47LJB12"
+ETH_WALLET = "0xeeb8FDc4aAe71B53934318707d0e9747C5c66f6e"
+# ##############################################################
+
 # Preise sind fest im Code hinterlegt
 PRICES = {
     "bilder": { 10: 5, 25: 10, 35: 15 },
@@ -69,9 +76,7 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
 
 # --- Handler-Funktionen ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Setzt den Nutzer-Zustand zurück, falls er z.B. bei der Passworteingabe war
     context.user_data.clear()
-    
     welcome_text = (
         "Herzlich Willkommen! ✨\n\n"
         "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
@@ -97,7 +102,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# ... (handle_callback_query bleibt größtenteils gleich) ...
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -170,9 +174,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         amount = int(amount_str)
         price = PRICES[media_type][amount]
         text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
+        # --- GEÄNDERT: Neuer Krypto-Button ---
         keyboard = [
             [InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")],
             [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")],
+            [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")],
             [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")],
         ]
         await query.message.delete()
@@ -182,6 +188,47 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
+    
+    # ##############################################################
+    # NEU: Handler für Krypto-Auswahl
+    # ##############################################################
+    elif data.startswith("pay_crypto:"):
+        _, media_type, amount = data.split(":")
+        text = "Bitte wähle die gewünschte Kryptowährung:"
+        keyboard = [
+            [
+                InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"),
+                InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")
+            ],
+            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("show_wallet:"):
+        _, crypto_type, media_type, amount_str = data.split(":")
+        amount = int(amount_str)
+        price = PRICES[media_type][amount]
+
+        wallet_address = ""
+        crypto_name = ""
+        if crypto_type == "btc":
+            wallet_address = BTC_WALLET
+            crypto_name = "Bitcoin (BTC)"
+        else: # eth
+            wallet_address = ETH_WALLET
+            crypto_name = "Ethereum (ETH)"
+
+        text = (
+            f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n"
+            f"1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n"
+            f"_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n"
+            f"2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n"
+            f"3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann."
+        )
+        keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    # ##############################################################
+    
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":")
         amount = int(amount_str)
@@ -197,7 +244,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [
             [InlineKeyboardButton("Amazon", callback_data="voucher_provider:amazon"),
              InlineKeyboardButton("Paysafe", callback_data="voucher_provider:paysafe")],
-            [InlineKeyboardButton("« Zurück", callback_data="show_price_options")],
+            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:bilder:10")] # Dummy-Daten, da sie nicht verwendet werden
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     elif data.startswith("voucher_provider:"):
@@ -207,18 +254,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# ##############################################################
-# GEÄNDERT: Neue Funktion, die auf Texteingaben reagiert
-# ##############################################################
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Bearbeitet Texteingaben für verschiedene Zustände (Admin-Login, Gutschein)."""
-    
-    # Zustand 1: Bot wartet auf das Admin-Passwort
     if context.user_data.get("awaiting_admin_password"):
         password = update.message.text
-        # Wichtig: Zustand sofort zurücksetzen, egal ob Passwort richtig oder falsch war
         del context.user_data["awaiting_admin_password"]
-
         if password == ADMIN_PASSWORD:
             vouchers = load_vouchers()
             amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"
@@ -229,45 +268,28 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(text, parse_mode='Markdown')
         else:
             await update.message.reply_text("Falsches Passwort.")
-
-    # Zustand 2: Bot wartet auf einen Gutscheincode
     elif context.user_data.get("awaiting_voucher"):
         provider = context.user_data.pop("awaiting_voucher")
         code = update.message.text
-        
         vouchers = load_vouchers()
         vouchers[provider].append(code)
         save_vouchers(vouchers)
-        
         await update.message.reply_text(
             "Vielen Dank! Dein Gutschein wurde übermittelt und wird geprüft. "
             "Ich melde mich bei dir, sobald er verifiziert ist. ✨"
         )
-        # Nach erfolgreicher Eingabe zurück zum Startmenü
         await start(update, context)
 
-# ##############################################################
-# GEÄNDERT: Die /admin Funktion startet nur noch den Login-Prozess
-# ##############################################################
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Startet den Admin-Login, indem der Bot nach dem Passwort fragt."""
     context.user_data["awaiting_admin_password"] = True
     await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
-
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Befehle
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
-    
-    # Button-Klicks
     application.add_handler(CallbackQueryHandler(handle_callback_query))
-    
-    # Texteingaben (reagiert jetzt auf Admin-Passwort UND Gutscheine)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    
     if WEBHOOK_URL:
         application.run_webhook(
             listen="0.0.0.0",
