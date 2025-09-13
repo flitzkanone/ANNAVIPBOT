@@ -70,6 +70,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     data = q.data
 
+    # Start-Buttons
     if data == "prices":
         keyboard = [
             [InlineKeyboardButton("Kleine Schwester", callback_data="prices_small")],
@@ -92,6 +93,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         global selected_type
         selected_type = "bilder" if data == "type_images" else "videos"
 
+        # Angebot Buttons
         offers = []
         if selected_type == "videos" and selected_sister == "gross":
             offers = [(10, 15), (25, 25), (35, 30)]
@@ -111,18 +113,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("Zurück", callback_data=f"prices_{selected_sister}")])
         await q.edit_message_text("Wähle dein Angebot:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif data.startswith("voucher_"):
-        parts = data.split("_")
-        context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
-        await context.bot.send_message(q.message.chat_id, "Gib den Anbieter des Gutscheins ein:")
-        return VOUCHER_PROVIDER
+# --- Gutschein Flow (Buttons für Anbieter) ---
+async def voucher_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    parts = q.data.split("_")
+    context.user_data["voucher_info"] = {"sister": parts[1], "type": parts[2], "amount": parts[3]}
+    
+    keyboard = [
+        [InlineKeyboardButton("Amazon", callback_data="voucher_provider_Amazon")],
+        [InlineKeyboardButton("PaySafe", callback_data="voucher_provider_PaySafe")],
+    ]
+    await q.edit_message_text("Wähle den Anbieter des Gutscheins:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return VOUCHER_PROVIDER
 
-# --- Gutschein Handler ---
-async def voucher_provider(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["voucher_info"]["provider"] = update.message.text
-    await update.message.reply_text("Gib den Gutscheincode ein:")
+# --- Anbieter gewählt ---
+async def voucher_provider_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    provider = q.data.split("_")[-1]
+    context.user_data["voucher_info"]["provider"] = provider
+    await context.bot.send_message(q.message.chat_id, f"Gib jetzt den Gutscheincode für {provider} ein:")
     return VOUCHER_CODE
 
+# --- Gutscheincode speichern ---
 async def voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = context.user_data["voucher_info"]
     provider = info["provider"]
@@ -131,7 +145,7 @@ async def voucher_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         vouchers[provider] = []
     vouchers[provider].append(code)
     save_vouchers(vouchers)
-    await update.message.reply_text("✅ Gutschein gespeichert!")
+    await update.message.reply_text(f"✅ Gutschein für {provider} gespeichert!")
     return ConversationHandler.END
 
 # --- Admin ---
@@ -153,13 +167,14 @@ async def admin_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Handler registrieren ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
+application.add_handler(CallbackQueryHandler(voucher_start, pattern=r'^voucher_'))
 
 conv = ConversationHandler(
     entry_points=[CommandHandler('admin', admin_start)],
     states={
         ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_password)],
-        VOUCHER_PROVIDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, voucher_provider)],
-        VOUCHER_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, voucher_code)]
+        VOUCHER_PROVIDER: [CallbackQueryHandler(voucher_provider_choice, pattern=r'^voucher_provider_')],
+        VOUCHER_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, voucher_code)],
     },
     fallbacks=[]
 )
@@ -168,7 +183,7 @@ application.add_handler(conv)
 # --- FastAPI + Webhook ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    await application.bot.set_webhook(url=f"{WEBHOOK_URL.rstrip('/')}/webhook")
     async with application:
         await application.start()
         yield
