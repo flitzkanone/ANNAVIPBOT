@@ -2,15 +2,27 @@ import sqlite3
 import os
 from datetime import datetime
 
-# Wichtiger Hinweis für Render.com:
-# Render verwendet einen "Persistent Disk" unter /data.
-# Lokal wird die DB im Unterordner /database erstellt.
-DATABASE_DIR = "/data" if os.environ.get("RENDER") else "database"
+# --- VERBESSERTER TEIL ---
+# Wir unterscheiden jetzt explizit zwischen lokalem und Render-Betrieb.
+IS_ON_RENDER = os.environ.get("RENDER")
+
+if IS_ON_RENDER:
+    # Auf Render wird der /data-Ordner von der Persistent Disk bereitgestellt.
+    # Wir dürfen ihn NICHT selbst erstellen.
+    DATABASE_DIR = "/data"
+else:
+    # Lokal erstellen wir einen Unterordner namens 'database'.
+    DATABASE_DIR = "database"
+
 DATABASE_PATH = os.path.join(DATABASE_DIR, "vouchers.db")
+# --- ENDE VERBESSERTER TEIL ---
 
 def init_db():
     """Initialisiert die Datenbank und erstellt die Tabelle, falls sie nicht existiert."""
-    if not os.path.exists(DATABASE_DIR):
+    
+    # Den Ordner nur erstellen, wenn wir lokal laufen UND er noch nicht existiert.
+    if not IS_ON_RENDER and not os.path.exists(DATABASE_DIR):
+        print(f"Erstelle lokalen Datenbank-Ordner unter: {DATABASE_DIR}")
         os.makedirs(DATABASE_DIR)
         
     conn = sqlite3.connect(DATABASE_PATH)
