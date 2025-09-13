@@ -83,7 +83,6 @@ async def send_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, categ
     prefix = f"{category}_vorschau_"
     image_path = get_random_image(prefix)
 
-    # Alte Nachricht löschen, da wir jetzt ein Bild senden
     await update.callback_query.message.delete()
     
     if image_path:
@@ -107,7 +106,7 @@ async def send_prices(update: Update, context: ContextTypes.DEFAULT_TYPE, catego
     await clear_chat(update, context)
     await show_loading(update, context)
     
-    context.user_data['category'] = category # Kategorie für später speichern
+    context.user_data['category'] = category
 
     prefix = f"{category}_preis_"
     image_path = get_random_image(prefix)
@@ -115,7 +114,6 @@ async def send_prices(update: Update, context: ContextTypes.DEFAULT_TYPE, catego
     await update.callback_query.message.delete()
     
     if image_path:
-        # Beispiel-Pakete. Passe die Preise und Namen hier an!
         keyboard = [
             [InlineKeyboardButton("Paket S (10 Items) - 15€", callback_data='pay_15')],
             [InlineKeyboardButton("Paket M (25 Items) - 30€", callback_data='pay_30')],
@@ -147,7 +145,7 @@ async def payment_options(update: Update, context: ContextTypes.DEFAULT_TYPE, am
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.callback_query.edit_message_caption( # .edit_message_caption für Nachrichten mit Bild
+    await update.callback_query.edit_message_caption(
         caption=f"Du hast das Paket für {amount}€ ausgewählt. Wie möchtest du bezahlen?",
         reply_markup=reply_markup
     )
@@ -158,7 +156,6 @@ async def paypal_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount = context.user_data.get('amount', 0)
     user_id = update.effective_user.id
     
-    # ÄNDERE 'DEINPAYPALNAME' ZU DEINEM ECHTEN PAYPAL.ME NAMEN!
     paypal_link = f"https://paypal.me/DEINPAYPALNAME/{amount}" 
     
     keyboard = [
@@ -197,12 +194,10 @@ async def request_voucher_code(update: Update, context: ContextTypes.DEFAULT_TYP
     await clear_chat(update, context)
     context.user_data['voucher_provider'] = provider
     
-    # Alte Nachricht löschen und neue Textnachricht senden
     await update.callback_query.message.delete()
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutscheincode als einzelne Nachricht."
     )
-    # Setze einen "State", damit der Bot weiß, dass die nächste Nachricht der Code ist
     context.user_data['state'] = 'awaiting_voucher'
