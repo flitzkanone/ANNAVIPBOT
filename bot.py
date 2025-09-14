@@ -81,33 +81,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query; await query.answer(); data = query.data
     
-    # PDF-Download muss vor dem allgemeinen Lade-Emoji geprüft werden, da es eine direkte Aktion ist
     if data == "download_vouchers_pdf":
         await query.answer("PDF wird erstellt...")
+        
         vouchers = load_vouchers()
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=16)
+        
         pdf.cell(0, 10, "Gutschein Report", ln=True, align='C')
         pdf.ln(10)
-        pdf.set_font("Arial", size=12)
-        
+
+        # Amazon Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Amazon Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
         amazon_vouchers = vouchers.get("amazon", [])
         if amazon_vouchers:
-            for code in amazon_vouchers: pdf.cell(0, 8, f"- {code}", ln=True)
+            for code in amazon_vouchers:
+                # KORRIGIERT: Bereinige den Text von Sonderzeichen, bevor er geschrieben wird
+                sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
+                pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
         else:
             pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         pdf.ln(5)
 
+        # Paysafe Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Paysafe Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
         paysafe_vouchers = vouchers.get("paysafe", [])
         if paysafe_vouchers:
-            for code in paysafe_vouchers: pdf.cell(0, 8, f"- {code}", ln=True)
+            for code in paysafe_vouchers:
+                # KORRIGIERT: Bereinige den Text von Sonderzeichen, bevor er geschrieben wird
+                sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
+                pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
         else:
             pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         
@@ -162,22 +170,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
-        paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"
+        paypal_link = f"https.paypal.me/{PAYPAL_USER}/{price}"
         text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
-    
-    # KORRIGIERT: Dieser Logik-Block hat gefehlt.
     elif data.startswith("pay_voucher:"):
         _, media_type, amount_str = data.split(":")
         text = "Welchen Gutschein möchtest du einlösen?"
-        keyboard = [
-            [InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"),
-             InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")],
-            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]
-        ]
+        keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        
     elif data.startswith("voucher_provider:"):
         _, provider = data.split(":")
         context.user_data["awaiting_voucher"] = provider
@@ -225,12 +226,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     
     if WEBHOOK_URL:
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get('PORT', 8443)),
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
+        application.run_webhook(listen="0.0.0.0", port=int(os.environ.get('PORT', 8443)), url_path=BOT_TOKEN, webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
     else:
         application.run_polling()
 
