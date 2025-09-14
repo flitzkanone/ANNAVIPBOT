@@ -70,9 +70,7 @@ async def cleanup_previous_messages(chat_id: int, context: ContextTypes.DEFAULT_
                 pass
         del context.user_data["messages_to_delete"]
 
-# --- NEU: Hilfsfunktion zum Senden der Vorschau (vermeidet Code-Dopplung) ---
 async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, schwester_code: str):
-    """Sendet ein geschütztes Vorschaubild und eine separate Nachricht mit Buttons."""
     chat_id = update.effective_chat.id
     image_paths = get_media_files(schwester_code, "vorschau")
     
@@ -81,11 +79,9 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     random_image_path = random.choice(image_paths)
     
-    # 1. Geschütztes Foto senden
     with open(random_image_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
 
-    # 2. Text und Buttons in einer separaten Nachricht senden
     if schwester_code == 'gs':
         caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
     else:
@@ -93,20 +89,23 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     keyboard_buttons = [
         [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
-        [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], # NEUER BUTTON
+        [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")],
         [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]
     ]
     
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
 
-
 # --- Bot Handler-Funktionen ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     chat_id = update.effective_chat.id
     await cleanup_previous_messages(chat_id, context)
-    welcome_text = "Herzlich Willkommen! ✨\n\n..." # Gekürzt
+    welcome_text = (
+        "Herzlich Willkommen! ✨\n\n"
+        "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
+        "Die gesamte Bedienung erfolgt über die Buttons."
+    )
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -114,8 +113,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await query.edit_message_text(welcome_text, reply_markup=reply_markup)
         except error.TelegramError:
-            try: await query.delete_message()
-            except Exception: pass
+            try:
+                await query.delete_message()
+            except Exception:
+                pass
             await context.bot.send_message(chat_id=chat_id, text=welcome_text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
@@ -125,8 +126,37 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = update.effective_chat.id
     
     if data == "download_vouchers_pdf":
-        # ... (unveränderter PDF-Code)
-        pass
+        await query.answer("PDF wird erstellt...")
+        vouchers = load_vouchers()
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=16)
+        pdf.cell(0, 10, "Gutschein Report", ln=True, align='C')
+        pdf.ln(10)
+        pdf.set_font("Arial", 'B', size=14)
+        pdf.cell(0, 10, "Amazon Gutscheine", ln=True)
+        pdf.set_font("Arial", size=12)
+        if vouchers.get("amazon", []):
+            for code in vouchers["amazon"]:
+                sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
+                pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
+        else:
+            pdf.cell(0, 8, "Keine vorhanden.", ln=True)
+        pdf.ln(5)
+        pdf.set_font("Arial", 'B', size=14)
+        pdf.cell(0, 10, "Paysafe Gutscheine", ln=True)
+        pdf.set_font("Arial", size=12)
+        if vouchers.get("paysafe", []):
+            for code in vouchers["paysafe"]:
+                sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
+                pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
+        else:
+            pdf.cell(0, 8, "Keine vorhanden.", ln=True)
+        pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1'))
+        pdf_buffer.seek(0)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        await context.bot.send_document(chat_id=query.message.chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
+        return
 
     if data in ["main_menu", "show_preview_options", "show_price_options"]:
         await cleanup_previous_messages(chat_id, context)
@@ -145,8 +175,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data.startswith("select_schwester:"):
         await cleanup_previous_messages(chat_id, context)
-        try: await query.message.delete()
-        except Exception: pass
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         
         _, schwester_code, action = data.split(":")
         
@@ -166,7 +198,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
             context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
 
-    # --- NEUER Block für den "Nächstes Bild" Button ---
     elif data.startswith("next_preview:"):
         await cleanup_previous_messages(chat_id, context)
         _, schwester_code = data.split(":")
@@ -174,8 +205,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data.startswith("select_package:"):
         await cleanup_previous_messages(chat_id, context)
-        try: await query.message.delete()
-        except Exception: pass
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         loading_message = await context.bot.send_message(chat_id=chat_id, text="⏳")
         await asyncio.sleep(2)
         await loading_message.delete()
@@ -185,8 +218,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:", "show_wallet:", "voucher_provider:")):
-        try: await query.edit_message_text(text="⏳")
-        except Exception: pass
+        try:
+            await query.edit_message_text(text="⏳")
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
         
         if data.startswith("pay_paypal:"):
             _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
