@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from io import BytesIO
 
-# NEU: Bibliothek zum Erstellen von PDFs
+# Bibliothek zum Erstellen von PDFs
 from fpdf import FPDF
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -39,7 +39,7 @@ MEDIA_DIR = "image"
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Hilfsfunktionen (unverändert) ---
+# --- Hilfsfunktionen ---
 def load_vouchers():
     try:
         with open(VOUCHER_FILE, "r") as f: return json.load(f)
@@ -62,9 +62,12 @@ def get_media_files(schwester_code: str, media_type: str) -> list:
 
 # --- Bot Handler-Funktionen ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # ... (Code unverändert)
     context.user_data.clear()
-    welcome_text = ( "Herzlich Willkommen! ✨\n\n...") # Gekürzt
+    welcome_text = (
+        "Herzlich Willkommen! ✨\n\n"
+        "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
+        "Die gesamte Bedienung erfolgt über die Buttons."
+    )
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -78,49 +81,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query; await query.answer(); data = query.data
     
-    # ##############################################################
-    # NEUE FUNKTION: PDF-Download
-    # ##############################################################
+    # PDF-Download muss vor dem allgemeinen Lade-Emoji geprüft werden, da es eine direkte Aktion ist
     if data == "download_vouchers_pdf":
         await query.answer("PDF wird erstellt...")
-        
         vouchers = load_vouchers()
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=16)
-        
-        # Titel
         pdf.cell(0, 10, "Gutschein Report", ln=True, align='C')
         pdf.ln(10)
-
         pdf.set_font("Arial", size=12)
         
-        # Amazon Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Amazon Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
-        if vouchers.get("amazon"):
-            for code in vouchers["amazon"]:
-                pdf.cell(0, 8, f"- {code}", ln=True)
+        amazon_vouchers = vouchers.get("amazon", [])
+        if amazon_vouchers:
+            for code in amazon_vouchers: pdf.cell(0, 8, f"- {code}", ln=True)
         else:
             pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         pdf.ln(5)
 
-        # Paysafe Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Paysafe Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
-        if vouchers.get("paysafe"):
-            for code in vouchers["paysafe"]:
-                pdf.cell(0, 8, f"- {code}", ln=True)
+        paysafe_vouchers = vouchers.get("paysafe", [])
+        if paysafe_vouchers:
+            for code in paysafe_vouchers: pdf.cell(0, 8, f"- {code}", ln=True)
         else:
             pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         
-        # PDF in den Arbeitsspeicher schreiben
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1'))
         pdf_buffer.seek(0)
-        
-        # Heutiges Datum für den Dateinamen
         today_str = datetime.now().strftime("%Y-%m-%d")
         
         await context.bot.send_document(
@@ -131,12 +123,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    # Der restliche Code der Funktion
     try:
-        if query.message.text: await query.edit_message_text(text="⏳ Bearbeite deine Anfrage...")
+        if query.message.text: await query.edit_message_text(text="⏳")
     except Exception: pass
+
     if data == "main_menu": await start(update, context)
-    # ... (der ganze Rest der handle_callback_query Funktion bleibt unverändert)
     elif data in ["show_preview_options", "show_price_options"]:
         action = "preview" if "preview" in data else "prices"; text = "Für wen interessierst du dich?"
         keyboard = [[InlineKeyboardButton("Kleine Schwester", callback_data=f"select_schwester:ks:{action}"), InlineKeyboardButton("Große Schwester", callback_data=f"select_schwester:gs:{action}")], [InlineKeyboardButton("« Zurück", callback_data="main_menu")]]
@@ -163,7 +154,36 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         _, media_type, amount = data.split(":"); text = "Bitte wähle die gewünschte Kryptowährung:"
         keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    # ... etc.
+    elif data.startswith("show_wallet:"):
+        _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
+        wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
+        text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann.")
+        keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    elif data.startswith("pay_paypal:"):
+        _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
+        paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"
+        text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
+        keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
+    
+    # KORRIGIERT: Dieser Logik-Block hat gefehlt.
+    elif data.startswith("pay_voucher:"):
+        _, media_type, amount_str = data.split(":")
+        text = "Welchen Gutschein möchtest du einlösen?"
+        keyboard = [
+            [InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"),
+             InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")],
+            [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif data.startswith("voucher_provider:"):
+        _, provider = data.split(":")
+        context.user_data["awaiting_voucher"] = provider
+        text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutscheincode als einzelne Nachricht."
+        keyboard = [[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get("awaiting_admin_password"):
@@ -173,17 +193,13 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"
             paysafe_codes = "\n".join([f"- `{code}`" for code in vouchers.get("paysafe", [])]) or "Keine"
             text = (f"*Admin-Bereich*\n\n*Eingelöste Amazon-Gutscheine:*\n{amazon_codes}\n\n*Eingelöste Paysafe-Gutscheine:*\n{paysafe_codes}")
-            
-            # --- GEÄNDERT: Neuer Button im Admin-Bereich ---
             keyboard = [[InlineKeyboardButton("📄 Vouchers als PDF laden", callback_data="download_vouchers_pdf")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
             await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
         else: await update.message.reply_text("Falsches Passwort.")
     elif context.user_data.get("awaiting_voucher"):
-        # ... (unverändert)
         provider = context.user_data.pop("awaiting_voucher"); code = update.message.text; vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
-        await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
+        await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt und wird geprüft. Ich melde mich bei dir, sobald er verifiziert ist. ✨"); await start(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
@@ -192,9 +208,8 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
         await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl."); return
-    # ... (Rest der Funktion unverändert)
     if len(context.args) < 2:
-        await update.message.reply_text("⚠️ Bitte gib den Befehl im richtigen Format an...", parse_mode='Markdown'); return
+        await update.message.reply_text("⚠️ Bitte gib den Befehl im richtigen Format an:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
     provider = context.args[0].lower()
     if provider not in ["amazon", "paysafe"]:
         await update.message.reply_text("Fehler: Anbieter muss 'amazon' oder 'paysafe' sein."); return
@@ -202,9 +217,7 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** erfolgreich hinzugefügt:\n`{code}`", parse_mode='Markdown')
 
 def main() -> None:
-    """Startet den Bot."""
     application = Application.builder().token(BOT_TOKEN).build()
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
