@@ -5,6 +5,7 @@ import random
 from dotenv import load_dotenv
 from datetime import datetime
 from io import BytesIO
+import asyncio
 
 # Bibliothek zum Erstellen von PDFs
 from fpdf import FPDF
@@ -24,6 +25,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+# Die AGE-Variablen sind jetzt ungenutzt, können aber für später bleiben
 AGE_ANNA = os.getenv("AGE_ANNA", "18")
 AGE_LUNA = os.getenv("AGE_LUNA", "21")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
@@ -83,52 +85,33 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data == "download_vouchers_pdf":
         await query.answer("PDF wird erstellt...")
-        
         vouchers = load_vouchers()
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=16)
-        
         pdf.cell(0, 10, "Gutschein Report", ln=True, align='C')
         pdf.ln(10)
-
-        # Amazon Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Amazon Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
-        amazon_vouchers = vouchers.get("amazon", [])
-        if amazon_vouchers:
-            for code in amazon_vouchers:
-                # KORRIGIERT: Bereinige den Text von Sonderzeichen, bevor er geschrieben wird
+        if vouchers.get("amazon", []):
+            for code in vouchers["amazon"]:
                 sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
                 pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
-        else:
-            pdf.cell(0, 8, "Keine vorhanden.", ln=True)
+        else: pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         pdf.ln(5)
-
-        # Paysafe Gutscheine
         pdf.set_font("Arial", 'B', size=14)
         pdf.cell(0, 10, "Paysafe Gutscheine", ln=True)
         pdf.set_font("Arial", size=12)
-        paysafe_vouchers = vouchers.get("paysafe", [])
-        if paysafe_vouchers:
-            for code in paysafe_vouchers:
-                # KORRIGIERT: Bereinige den Text von Sonderzeichen, bevor er geschrieben wird
+        if vouchers.get("paysafe", []):
+            for code in vouchers["paysafe"]:
                 sanitized_code = code.encode('latin-1', 'ignore').decode('latin-1')
                 pdf.cell(0, 8, f"- {sanitized_code}", ln=True)
-        else:
-            pdf.cell(0, 8, "Keine vorhanden.", ln=True)
-        
+        else: pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1'))
         pdf_buffer.seek(0)
         today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=pdf_buffer,
-            filename=f"Gutschein-Report_{today_str}.pdf",
-            caption="Hier ist dein aktueller Gutschein-Report."
-        )
+        await context.bot.send_document(chat_id=query.message.chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
         return
 
     try:
@@ -140,6 +123,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         action = "preview" if "preview" in data else "prices"; text = "Für wen interessierst du dich?"
         keyboard = [[InlineKeyboardButton("Kleine Schwester", callback_data=f"select_schwester:ks:{action}"), InlineKeyboardButton("Große Schwester", callback_data=f"select_schwester:gs:{action}")], [InlineKeyboardButton("« Zurück", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # --- GEÄNDERT: Logik für geschützte Inhalte und zurückgesetzte Texte ---
     elif data.startswith("select_schwester:"):
         _, schwester_code, action = data.split(":"); media_type = "vorschau" if action == "preview" else "preis"; image_paths = get_media_files(schwester_code, media_type)
         try: await query.delete_message()
@@ -147,17 +132,38 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not image_paths:
             await context.bot.send_message(chat_id=query.message.chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
         random_image_path = random.choice(image_paths); caption = ""; keyboard_buttons = []
+        
+        # 1. Geschütztes Foto ohne Caption und Buttons senden
+        with open(random_image_path, 'rb') as photo_file:
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=photo_file,
+                protect_content=True  # HIER WIRD DER INHALT GESCHÜTZT
+            )
+
+        # 2. Text und Buttons in einer separaten Nachricht senden
         if action == "preview":
-            if schwester_code == 'gs': caption = f"Hey ich bin Anna, ich bin {AGE_ANNA} schreib mir gerne für mehr 😏 @Anna_2008_030."
-            else: caption = f"Heyy ich bin Luna ich bin {AGE_LUNA} alt. Wenn du mehr willst schreib meiner Schwester @Anna_2008_030"
+            caption = "Hier ist eine zufällige Vorschau." # Alter Text wiederhergestellt
             keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         elif action == "prices":
-            caption = "Wähle dein gewünschtes Paket:"; keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data="select_package:videos:10")], [InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data="select_package:videos:25")], [InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data="select_package:videos:35")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
-        with open(random_image_path, 'rb') as photo_file: await context.bot.send_photo(chat_id=query.message.chat_id, photo=photo_file, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
+            caption = "Wähle dein gewünschtes Paket:" # Alter Text wiederhergestellt
+            keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data="select_package:videos:10")], [InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data="select_package:videos:25")], [InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data="select_package:videos:35")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+        
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard_buttons)
+        )
+    
     elif data.startswith("select_package:"):
+        try: await query.message.delete()
+        except Exception: pass
+        loading_message = await context.bot.send_message(chat_id=query.message.chat_id, text="⏳")
+        await asyncio.sleep(3)
+        await loading_message.delete()
         _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]; text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
         keyboard = [[InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
-        await query.message.delete(); await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data.startswith("pay_crypto:"):
         _, media_type, amount = data.split(":"); text = "Bitte wähle die gewünschte Kryptowährung:"
         keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
@@ -170,7 +176,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data.startswith("pay_paypal:"):
         _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
-        paypal_link = f"https.paypal.me/{PAYPAL_USER}/{price}"
+        paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"
         text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
         keyboard = [[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
@@ -182,7 +188,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("voucher_provider:"):
         _, provider = data.split(":")
         context.user_data["awaiting_voucher"] = provider
-        text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutscheincode als einzelne Nachricht."
+        text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
         keyboard = [[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
