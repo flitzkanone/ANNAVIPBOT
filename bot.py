@@ -29,8 +29,6 @@ AGE_LUNA = os.getenv("AGE_LUNA", "21")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 NOTIFICATION_GROUP_ID = os.getenv("NOTIFICATION_GROUP_ID")
 
-# Passwort wird nicht mehr benötigt
-# ADMIN_PASSWORD = "1974" 
 BTC_WALLET = "1FcgMLNBDLiuDSDip7AStuP19sq47LJB12"
 ETH_WALLET = "0xeeb8FDc4aAe71B53934318707d0e9747C5c66f6e"
 
@@ -81,7 +79,12 @@ async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
 async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str, user_id: int):
     if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
         notification_id_key = f'last_notification_id_{user_id}'
-        if notification_id_key in context.application.user_data.get(user_id, {}):
+        
+        # user_data wird pro User gespeichert, application.user_data ist globaler
+        if user_id not in context.application.user_data:
+            context.application.user_data[user_id] = {}
+
+        if notification_id_key in context.application.user_data[user_id]:
             try:
                 await context.bot.edit_message_text(
                     chat_id=NOTIFICATION_GROUP_ID,
@@ -91,11 +94,9 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: s
                 )
                 return
             except error.TelegramError:
-                pass
+                pass # Nachricht existiert nicht mehr, sende eine neue
         try:
             sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
-            if user_id not in context.application.user_data:
-                context.application.user_data[user_id] = {}
             context.application.user_data[user_id][notification_id_key] = sent_message.message_id
         except Exception as e:
             logger.error(f"Konnte Benachrichtigung nicht an Gruppe {NOTIFICATION_GROUP_ID} senden: {e}")
@@ -135,7 +136,7 @@ async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     try:
         if pinned_id:
             await context.bot.edit_message_text(chat_id=NOTIFICATION_GROUP_ID, message_id=pinned_id, text=text, parse_mode='Markdown')
-        else: raise error.BadRequest("Keine ID")
+        else: raise error.BadRequest("Keine ID vorhanden")
     except (error.BadRequest, error.Forbidden) as e:
         logger.warning(f"Konnte Dashboard nicht bearbeiten ({e}), erstelle neu.")
         try:
@@ -202,7 +203,7 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     image_to_show_path = image_paths[next_index]
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-    if schwester_code == 'gs': caption =f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
+    if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
     else: caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
     keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
@@ -236,9 +237,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query; await query.answer(); data = query.data; chat_id = update.effective_chat.id; user = update.effective_user
     if data == "download_vouchers_pdf":
         await query.answer("PDF wird erstellt...")
-        vouchers = load_vouchers()
-        pdf = FPDF()
-        pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(0, 10, "Gutschein Report", ln=True, align='C'); pdf.ln(10)
+        vouchers = load_vouchers(); pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(0, 10, "Gutschein Report", ln=True, align='C'); pdf.ln(10)
         pdf.set_font("Arial", 'B', size=14); pdf.cell(0, 10, "Amazon Gutscheine", ln=True); pdf.set_font("Arial", size=12)
         if vouchers.get("amazon", []):
             for code in vouchers["amazon"]: pdf.cell(0, 8, f"- {code.encode('latin-1', 'ignore').decode('latin-1')}", ln=True)
@@ -248,8 +247,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             for code in vouchers["paysafe"]: pdf.cell(0, 8, f"- {code.encode('latin-1', 'ignore').decode('latin-1')}", ln=True)
         else: pdf.cell(0, 8, "Keine vorhanden.", ln=True)
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1')); pdf_buffer.seek(0)
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
+        today_str = datetime.now().strftime("%Y-%m-%d"); await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
         return
     if data in ["main_menu", "show_preview_options", "show_price_options"]:
         await delete_last_admin_notification(context, user.id)
@@ -261,26 +259,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "admin_show_vouchers": await show_vouchers_panel(update, context)
     elif data == "admin_stats_users":
         stats = load_stats(); user_count = len(stats.get("total_users", []))
-        text = f"📊 *Nutzer-Statistiken*\n\nGesamtzahl der Nutzer: *{user_count}*"
-        keyboard = [[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
+        text = f"📊 *Nutzer-Statistiken*\n\nGesamtzahl der Nutzer: *{user_count}*"; keyboard = [[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_stats_clicks":
-        stats = load_stats(); events = stats.get("events", {})
-        text = "🖱️ *Klick-Statistiken*\n\n"
+        stats = load_stats(); events = stats.get("events", {}); text = "🖱️ *Klick-Statistiken*\n\n"
         if not events: text += "Noch keine Klicks erfasst."
         else:
             for event, count in sorted(events.items()): text += f"- `{event}`: *{count}* Klicks\n"
         keyboard = [[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_reset_stats":
-        text = "⚠️ *Bist du sicher?*\n\nDadurch werden alle Klick- und Nutzer-Statistiken unwiderruflich auf Null zurückgesetzt."
+        text = "⚠️ *Bist du sicher?*\n\nAlle Statistiken werden unwiderruflich auf Null zurückgesetzt."
         keyboard = [[InlineKeyboardButton("✅ Ja, zurücksetzen", callback_data="admin_reset_stats_confirm")], [InlineKeyboardButton("❌ Nein, abbrechen", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_reset_stats_confirm":
-        stats = load_stats()
-        stats["total_users"] = []
-        stats["events"] = {key: 0 for key in stats["events"]}
-        save_stats(stats)
+        stats = load_stats(); stats["total_users"] = []; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
         await update_pinned_summary(context)
         await query.edit_message_text("✅ Alle Statistiken wurden zurückgesetzt.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]))
     elif data in ["show_preview_options", "show_price_options"]:
@@ -339,7 +332,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}**...")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
             _, provider = data.split(":")
