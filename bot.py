@@ -7,12 +7,8 @@ from datetime import datetime
 from io import BytesIO
 import asyncio
 import re
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 
-# Bibliothek zum Erstellen von PDFs
 from fpdf import FPDF
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
 from telegram.ext import (
     Application,
@@ -22,7 +18,6 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from flask import Flask, request
 
 # --- Konfiguration ---
 load_dotenv()
@@ -317,7 +312,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann.")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
             _, provider = data.split(":")
@@ -325,21 +320,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
 
-async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_admin_menu(update, context):
     text = "🔒 *Admin-Menü*\n\nWähle eine Option:"
     keyboard = [[InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users")], [InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")], [InlineKeyboardButton("🎟️ Gutscheine anzeigen", callback_data="admin_show_vouchers")], [InlineKeyboardButton("🔄 Statistiken zurücksetzen", callback_data="admin_reset_stats")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def show_vouchers_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_vouchers_panel(update, context):
     vouchers = load_vouchers(); amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"; paysafe_codes = "\n".join([f"- `{code}`" for code in vouchers.get("paysafe", [])]) or "Keine"
     text = (f"*Eingelöste Gutscheine*\n\n*Amazon:*\n{amazon_codes}\n\n*Paysafe:*\n{paysafe_codes}")
     keyboard = [[InlineKeyboardButton("📄 Vouchers als PDF laden", callback_data="download_vouchers_pdf")], [InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_text_message(update, context):
     if context.user_data.get("awaiting_admin_password"):
         password = update.message.text; del context.user_data["awaiting_admin_password"]
         if password == ADMIN_PASSWORD: await show_admin_menu(update, context)
@@ -351,10 +346,10 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_admin_notification(context, notification_text)
         await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def admin(update, context):
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
-async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def add_voucher(update, context):
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if len(context.args) < 2: await update.message.reply_text("⚠️ Falsches Format:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
@@ -363,7 +358,7 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     code = " ".join(context.args[1:]); vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
     await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** hinzugefügt:\n`{code}`", parse_mode='Markdown')
 
-async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def set_summary_message(update, context):
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if str(update.effective_chat.id) != NOTIFICATION_GROUP_ID:
@@ -372,34 +367,60 @@ async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     stats = load_stats(); stats["pinned_message_id"] = None; save_stats(stats)
     await update_pinned_summary(context)
 
-async def main_async():
+async def main():
+    """Startet den Bot und initialisiert alles."""
     application = Application.builder().token(BOT_TOKEN).build()
-    await restore_stats_from_pinned_message(application)
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
     application.add_handler(CommandHandler("setsummary", set_summary_message))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    
-    if WEBHOOK_URL:
-        # Webhook-Startlogik
-        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-        port = int(os.environ.get('PORT', 8443))
-        flask_app = Flask(__name__)
-        @flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
-        def webhook():
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            asyncio.run(application.process_update(update))
-            return 'ok'
-        # Starte den Flask-Server in einem eigenen Thread, um den Hauptthread nicht zu blockieren
-        threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=port, use_reloader=False)).start()
-        logger.info(f"Bot-Webhook gesetzt, starte Webserver auf Port {port}")
-        await application.run_polling(drop_pending_updates=True, close_bot_session=False) # Hält das Programm am Leben
-    else:
-        # Polling-Startlogik
-        logger.info("Starte Bot im Polling-Modus")
-        await application.run_polling()
+
+    async with application:
+        await application.initialize()
+        await restore_stats_from_pinned_message(application)
+        if WEBHOOK_URL:
+            await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+        
+        # Diese leere Schleife ist nur für den Webhook-Modus, um das Programm am Leben zu erhalten.
+        # Im Polling-Modus wird diese durch application.run_polling() ersetzt.
+        if WEBHOOK_URL:
+            logger.info("Bot läuft im Webhook-Modus")
+            while True:
+                await asyncio.sleep(3600)
+        else:
+            logger.info("Bot läuft im Polling-Modus")
+            await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    if WEBHOOK_URL:
+        # Im Webhook-Modus (Render) starten wir den Webserver, der den Bot-Loop handhabt
+        ptb_app = Application.builder().token(BOT_TOKEN).build()
+        ptb_app.add_handler(CommandHandler("start", start))
+        ptb_app.add_handler(CommandHandler("admin", admin))
+        ptb_app.add_handler(CommandHandler("addvoucher", add_voucher))
+        ptb_app.add_handler(CommandHandler("setsummary", set_summary_message))
+        ptb_app.add_handler(CallbackQueryHandler(handle_callback_query))
+        ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+
+        asyncio.run(ptb_app.initialize())
+        asyncio.run(restore_stats_from_pinned_message(ptb_app))
+        asyncio.run(ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"))
+        
+        port = int(os.environ.get('PORT', 8443))
+        flask_app = Flask(__name__)
+
+        @flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
+        def webhook():
+            update = Update.de_json(request.get_json(force=True), ptb_app.bot)
+            asyncio.run(ptb_app.process_update(update))
+            return 'ok'
+        
+        flask_app.run(host='0.0.0.0', port=port, use_reloader=False)
+
+    else:
+        # Im Polling-Modus (lokal) starten wir direkt
+        asyncio.run(main())
