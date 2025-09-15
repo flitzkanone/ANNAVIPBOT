@@ -22,6 +22,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from flask import Flask, request
 
 # --- Konfiguration ---
 load_dotenv()
@@ -45,7 +46,7 @@ MEDIA_DIR = "image"
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Hilfsfunktionen für Vouchers & Stats ---
+# --- Hilfsfunktionen ---
 def load_vouchers():
     try:
         with open(VOUCHER_FILE, "r") as f: return json.load(f)
@@ -355,12 +356,12 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
-    if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl."); return
-    if len(context.args) < 2: await update.message.reply_text("⚠️ Bitte gib den Befehl im richtigen Format an:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
+    if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
+    if len(context.args) < 2: await update.message.reply_text("⚠️ Falsches Format:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
     provider = context.args[0].lower()
     if provider not in ["amazon", "paysafe"]: await update.message.reply_text("Fehler: Anbieter muss 'amazon' oder 'paysafe' sein."); return
     code = " ".join(context.args[1:]); vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
-    await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** erfolgreich hinzugefügt:\n`{code}`", parse_mode='Markdown')
+    await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** hinzugefügt:\n`{code}`", parse_mode='Markdown')
 
 async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
@@ -382,22 +383,21 @@ async def main_async():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     
     if WEBHOOK_URL:
+        # Webhook-Startlogik
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
         port = int(os.environ.get('PORT', 8443))
-        
-        class WebhookHandler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                content_length = int(self.headers['Content-Length'])
-                body = self.rfile.read(content_length)
-                self.send_response(200)
-                self.end_headers()
-                update = Update.de_json(json.loads(body.decode('utf-8')), application.bot)
-                asyncio.run(application.process_update(update))
-
-        httpd = HTTPServer(('0.0.0.0', port), WebhookHandler)
-        logger.info(f"Bot gestartet, lauscht auf Port {port}")
-        httpd.serve_forever()
+        flask_app = Flask(__name__)
+        @flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
+        def webhook():
+            update = Update.de_json(request.get_json(force=True), application.bot)
+            asyncio.run(application.process_update(update))
+            return 'ok'
+        # Starte den Flask-Server in einem eigenen Thread, um den Hauptthread nicht zu blockieren
+        threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=port, use_reloader=False)).start()
+        logger.info(f"Bot-Webhook gesetzt, starte Webserver auf Port {port}")
+        await application.run_polling(drop_pending_updates=True, close_bot_session=False) # Hält das Programm am Leben
     else:
+        # Polling-Startlogik
         logger.info("Starte Bot im Polling-Modus")
         await application.run_polling()
 
