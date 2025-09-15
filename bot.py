@@ -42,7 +42,7 @@ MEDIA_DIR = "image"
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Hilfsfunktionen für Vouchers & Stats ---
+# --- Hilfsfunktionen ---
 def load_vouchers():
     try:
         with open(VOUCHER_FILE, "r") as f: return json.load(f)
@@ -130,9 +130,9 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
 
     if schwester_code == 'gs':
-        caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
+        caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
     else:
-        caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+        caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
     
     keyboard_buttons = [
         [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
@@ -266,7 +266,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             except error.TelegramError as e:
                 logger.warning(f"Konnte Bild nicht bearbeiten, sende neu: {e}")
                 await cleanup_previous_messages(chat_id, context)
-                await send_preview_message(update, context, schwester_code)
+                await send_preview_message(update, context, schwester_code, is_next_click=True)
 
     elif data.startswith("select_package:"):
         track_event("package_selected")
@@ -351,6 +351,16 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
+# --- NEU: Temporärer Befehl zum Abfragen der Chat-ID ---
+async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ein temporärer Befehl, um die Chat-ID zu bekommen."""
+    chat_id = update.effective_chat.id
+    await update.message.reply_text(
+        f"Die ID für diesen Chat ist: `{chat_id}`\n\n"
+        "Kopiere diese Zahl (inklusive Minuszeichen!) und trage sie in Render als `NOTIFICATION_GROUP_ID` ein.",
+        parse_mode='Markdown'
+    )
+
 async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
@@ -368,13 +378,4 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    
-    if WEBHOOK_URL:
-        application.run_webhook(listen="0.0.0.0", port=int(os.environ.get('PORT', 8443)), url_path=BOT_TOKEN, webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-    else:
-        application.run_polling()
-
-if __name__ == "__main__":
-    main()
+    # --- NE
