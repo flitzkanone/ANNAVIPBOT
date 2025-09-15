@@ -6,9 +6,13 @@ from dotenv import load_dotenv
 from datetime import datetime
 from io import BytesIO
 import asyncio
-import re # NEU: Für das Auslesen der Statistiken aus Text
+import re
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
+# Bibliothek zum Erstellen von PDFs
 from fpdf import FPDF
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
 from telegram.ext import (
     Application,
@@ -109,59 +113,42 @@ async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
         if pinned_id:
             await context.bot.edit_message_text(chat_id=NOTIFICATION_GROUP_ID, message_id=pinned_id, text=text, parse_mode='Markdown')
         else: raise error.BadRequest("Keine ID vorhanden")
-    except (error.BadRequest, error.Forbidden):
-        logger.warning("Konnte angepinnte Nachricht nicht bearbeiten, erstelle eine neue.")
+    except (error.BadRequest, error.Forbidden) as e:
+        logger.warning(f"Konnte Dashboard nicht bearbeiten ({e}), erstelle neu.")
         try:
             sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=text, parse_mode='Markdown')
             new_id = sent_message.message_id
-            stats["pinned_message_id"] = new_id
-            save_stats(stats)
+            stats["pinned_message_id"] = new_id; save_stats(stats)
             await context.bot.pin_chat_message(chat_id=NOTIFICATION_GROUP_ID, message_id=new_id, disable_notification=True)
         except Exception as e_new:
-            logger.error(f"Konnte Dashboard-Nachricht nicht erstellen oder anpinnen: {e_new}")
+            logger.error(f"Konnte Dashboard nicht erstellen/anpinnen: {e_new}")
 
-# --- NEUE Funktion zur Wiederherstellung der Stats ---
 async def restore_stats_from_pinned_message(application: Application):
     if not NOTIFICATION_GROUP_ID:
-        logger.info("Keine NOTIFICATION_GROUP_ID gesetzt, Wiederherstellung der Stats wird übersprungen.")
-        return
-    
-    logger.info("Versuche, Statistiken aus der angepinnten Nachricht wiederherzustellen...")
+        logger.info("Keine NOTIFICATION_GROUP_ID gesetzt, Wiederherstellung übersprungen."); return
+    logger.info("Versuche, Statistiken wiederherzustellen...")
     try:
         chat = await application.bot.get_chat(chat_id=NOTIFICATION_GROUP_ID)
-        if not chat.pinned_message:
-            logger.warning("Keine angepinnte Nachricht in der Admin-Gruppe gefunden.")
-            return
-
+        if not chat.pinned_message or "Bot-Statistik Dashboard" not in chat.pinned_message.text:
+            logger.warning("Keine passende Dashboard-Nachricht gefunden."); return
         pinned_text = chat.pinned_message.text
-        if "Bot-Statistik Dashboard" not in pinned_text:
-            logger.warning("Angepinnte Nachricht scheint nicht das Dashboard zu sein.")
-            return
-
         stats = load_stats()
-        
-        def extract_stat(pattern, text):
-            match = re.search(pattern, text)
-            return int(match.group(1)) if match else 0
-
-        # Nur Events wiederherstellen, total_users kann nicht wiederhergestellt werden
-        stats['events']['start_command'] = extract_stat(r"Starts insgesamt:\s*(\d+)", pinned_text)
-        stats['events']['payment_paypal'] = extract_stat(r"PayPal Klicks:\s*(\d+)", pinned_text)
-        stats['events']['payment_crypto'] = extract_stat(r"Krypto Klicks:\s*(\d+)", pinned_text)
-        stats['events']['payment_voucher'] = extract_stat(r"Gutschein Klicks:\s*(\d+)", pinned_text)
-        stats['events']['preview_ks'] = extract_stat(r"Vorschau \(KS\):\s*(\d+)", pinned_text)
-        stats['events']['preview_gs'] = extract_stat(r"Vorschau \(GS\):\s*(\d+)", pinned_text)
-        stats['events']['prices_ks'] = extract_stat(r"Preise \(KS\):\s*(\d+)", pinned_text)
-        stats['events']['prices_gs'] = extract_stat(r"Preise \(GS\):\s*(\d+)", pinned_text)
-        stats['events']['next_preview'] = extract_stat(r"'Nächstes Bild' Klicks:\s*(\d+)", pinned_text)
-        stats['events']['package_selected'] = extract_stat(r"Paketauswahl:\s*(\d+)", pinned_text)
+        def extract(p, t): return int(re.search(p, t).group(1)) if re.search(p, t) else 0
+        stats['events']['start_command'] = extract(r"Starts insgesamt:\s*(\d+)", pinned_text)
+        stats['events']['payment_paypal'] = extract(r"PayPal Klicks:\s*(\d+)", pinned_text)
+        stats['events']['payment_crypto'] = extract(r"Krypto Klicks:\s*(\d+)", pinned_text)
+        stats['events']['payment_voucher'] = extract(r"Gutschein Klicks:\s*(\d+)", pinned_text)
+        stats['events']['preview_ks'] = extract(r"Vorschau \(KS\):\s*(\d+)", pinned_text)
+        stats['events']['preview_gs'] = extract(r"Vorschau \(GS\):\s*(\d+)", pinned_text)
+        stats['events']['prices_ks'] = extract(r"Preise \(KS\):\s*(\d+)", pinned_text)
+        stats['events']['prices_gs'] = extract(r"Preise \(GS\):\s*(\d+)", pinned_text)
+        stats['events']['next_preview'] = extract(r"'Nächstes Bild' Klicks:\s*(\d+)", pinned_text)
+        stats['events']['package_selected'] = extract(r"Paketauswahl:\s*(\d+)", pinned_text)
         stats['pinned_message_id'] = chat.pinned_message.message_id
-
         save_stats(stats)
-        logger.info("Statistiken erfolgreich aus der angepinnten Nachricht wiederhergestellt.")
-
+        logger.info("Statistiken erfolgreich wiederhergestellt.")
     except Exception as e:
-        logger.error(f"Fehler bei der Wiederherstellung der Statistiken: {e}")
+        logger.error(f"Fehler bei Wiederherstellung: {e}")
 
 def get_media_files(schwester_code: str, media_type: str) -> list:
     matching_files = []; target_prefix = f"{schwester_code.lower()}_{media_type.lower()}"
@@ -208,7 +195,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}\n*Zeitstempel:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         await send_admin_notification(context, message)
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
-    welcome_text = "Herzlich Willkommen! ✨\n\n..."
+    welcome_text = (
+        "Herzlich Willkommen! ✨\n\n"
+        "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
+        "Die gesamte Bedienung erfolgt über die Buttons."
+    )
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -222,8 +213,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query; await query.answer(); data = query.data; chat_id = update.effective_chat.id
-    if data == "download_vouchers_pdf": #... (PDF code unverändert)
-        pass
+    if data == "download_vouchers_pdf":
+        await query.answer("PDF wird erstellt...")
+        vouchers = load_vouchers()
+        pdf = FPDF()
+        pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(0, 10, "Gutschein Report", ln=True, align='C'); pdf.ln(10)
+        pdf.set_font("Arial", 'B', size=14); pdf.cell(0, 10, "Amazon Gutscheine", ln=True); pdf.set_font("Arial", size=12)
+        if vouchers.get("amazon", []):
+            for code in vouchers["amazon"]: pdf.cell(0, 8, f"- {code.encode('latin-1', 'ignore').decode('latin-1')}", ln=True)
+        else: pdf.cell(0, 8, "Keine vorhanden.", ln=True)
+        pdf.ln(5); pdf.set_font("Arial", 'B', size=14); pdf.cell(0, 10, "Paysafe Gutscheine", ln=True); pdf.set_font("Arial", size=12)
+        if vouchers.get("paysafe", []):
+            for code in vouchers["paysafe"]: pdf.cell(0, 8, f"- {code.encode('latin-1', 'ignore').decode('latin-1')}", ln=True)
+        else: pdf.cell(0, 8, "Keine vorhanden.", ln=True)
+        pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1')); pdf_buffer.seek(0)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
+        return
     if data in ["main_menu", "show_preview_options", "show_price_options"]:
         await cleanup_previous_messages(chat_id, context)
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(0.5)
@@ -266,8 +272,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         _, schwester_code, action = data.split(":")
         await track_event(f"{action}_{schwester_code}", context)
         if action == "preview": await send_preview_message(update, context, schwester_code, is_next_click=False)
-        elif action == "prices": #... (prices logik unverändert)
-            pass
+        elif action == "prices":
+            image_paths = get_media_files(schwester_code, "preis"); image_paths.sort()
+            if not image_paths:
+                await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
+            random_image_path = random.choice(image_paths)
+            with open(random_image_path, 'rb') as photo_file:
+                photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
+            caption = "Wähle dein gewünschtes Paket:"
+            keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data="select_package:videos:10")], [InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data="select_package:videos:25")], [InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data="select_package:videos:35")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+            text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
+            context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
     elif data.startswith("next_preview:"):
         await track_event("next_preview", context)
         _, schwester_code = data.split(":")
@@ -288,22 +303,30 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         payment_type = payment_type_full.split('_')[1]
         if payment_type == "paypal":
             await track_event("payment_paypal", context); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.")
-            #...
+            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif payment_type == "voucher":
             await track_event("payment_voucher", context); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.")
-            #...
+            text = "Welchen Gutschein möchtest du einlösen?"; keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif payment_type == "crypto":
             await track_event("payment_crypto", context); await send_admin_notification(context, f"🪙 *Krypto Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Krypto bezahlen.")
-            #...
+            text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        elif data.startswith("show_wallet:"):
+            _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
+            wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
+            text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann.")
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
+        elif data.startswith("voucher_provider:"):
+            _, provider = data.split(":")
+            context.user_data["awaiting_voucher"] = provider
+            text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
 
 async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔒 *Admin-Menü*\n\nWähle eine Option:"
-    keyboard = [
-        [InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users")],
-        [InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")],
-        [InlineKeyboardButton("🎟️ Gutscheine anzeigen", callback_data="admin_show_vouchers")],
-        [InlineKeyboardButton("🔄 Statistiken zurücksetzen", callback_data="admin_reset_stats")]
-    ]
+    keyboard = [[InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users")], [InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")], [InlineKeyboardButton("🎟️ Gutscheine anzeigen", callback_data="admin_show_vouchers")], [InlineKeyboardButton("🔄 Statistiken zurücksetzen", callback_data="admin_reset_stats")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -341,19 +364,16 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
-    if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl."); return
+    if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if str(update.effective_chat.id) != NOTIFICATION_GROUP_ID:
-        await update.message.reply_text("⚠️ Dieser Befehl funktioniert nur in der Admin-Gruppe."); return
-    await update.message.reply_text("🔄 Erstelle und pinne die Dashboard-Nachricht...")
+        await update.message.reply_text("⚠️ Dieser Befehl geht nur in der Admin-Gruppe."); return
+    await update.message.reply_text("🔄 Erstelle Dashboard...")
     stats = load_stats(); stats["pinned_message_id"] = None; save_stats(stats)
     await update_pinned_summary(context)
 
-async def main():
+async def main_async():
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Führe die Wiederherstellung der Stats vor dem Start aus
     await restore_stats_from_pinned_message(application)
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
@@ -363,11 +383,23 @@ async def main():
     
     if WEBHOOK_URL:
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-        logger.info(f"Webhook auf {WEBHOOK_URL} gesetzt")
-        # In einer Webhook-Umgebung wird der Server von Render gestartet
+        port = int(os.environ.get('PORT', 8443))
+        
+        class WebhookHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length)
+                self.send_response(200)
+                self.end_headers()
+                update = Update.de_json(json.loads(body.decode('utf-8')), application.bot)
+                asyncio.run(application.process_update(update))
+
+        httpd = HTTPServer(('0.0.0.0', port), WebhookHandler)
+        logger.info(f"Bot gestartet, lauscht auf Port {port}")
+        httpd.serve_forever()
     else:
         logger.info("Starte Bot im Polling-Modus")
         await application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_async())
