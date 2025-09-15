@@ -70,22 +70,39 @@ async def cleanup_previous_messages(chat_id: int, context: ContextTypes.DEFAULT_
                 pass
         del context.user_data["messages_to_delete"]
 
-async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, schwester_code: str):
+# --- GEÄNDERT: Hilfsfunktion für die Vorschau mit sequenzieller Logik ---
+async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, schwester_code: str, is_next_click: bool = False):
     chat_id = update.effective_chat.id
     image_paths = get_media_files(schwester_code, "vorschau")
-    
+    image_paths.sort() # Wichtig: Sortiere die Bilder nach Dateinamen
+
     if not image_paths:
         await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
 
-    random_image_path = random.choice(image_paths)
+    index_key = f'preview_index_{schwester_code}'
     
-    with open(random_image_path, 'rb') as photo_file:
+    # Wenn es der erste Klick ist (nicht "Nächstes Bild"), starte bei 0
+    if not is_next_click:
+        current_index = -1
+        if index_key in context.user_data:
+             del context.user_data[index_key] # Setze den Zähler zurück
+    else:
+        current_index = context.user_data.get(index_key, -1)
+    
+    next_index = current_index + 1
+    if next_index >= len(image_paths):
+        next_index = 0 # Springe zurück zum Anfang
+
+    context.user_data[index_key] = next_index
+    image_to_show_path = image_paths[next_index]
+    
+    with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
 
     if schwester_code == 'gs':
-        caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
+        caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
     else:
-        caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+        caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
     
     keyboard_buttons = [
         [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
@@ -183,7 +200,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         _, schwester_code, action = data.split(":")
         
         if action == "preview":
-            await send_preview_message(update, context, schwester_code)
+            await send_preview_message(update, context, schwester_code, is_next_click=False)
         elif action == "prices":
             image_paths = get_media_files(schwester_code, "preis")
             if not image_paths:
@@ -201,7 +218,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("next_preview:"):
         await cleanup_previous_messages(chat_id, context)
         _, schwester_code = data.split(":")
-        await send_preview_message(update, context, schwester_code)
+        await send_preview_message(update, context, schwester_code, is_next_click=True)
 
     elif data.startswith("select_package:"):
         await cleanup_previous_messages(chat_id, context)
@@ -217,7 +234,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:", "show_wallet:", "voucher_provider:")):
         try:
             await query.edit_message_text(text="⏳")
-            await asyncio.sleep(2) # Die gewünschte 2-Sekunden-Pause
+            await asyncio.sleep(2)
         except Exception:
             pass
         
