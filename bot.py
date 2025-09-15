@@ -80,7 +80,6 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: s
     if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
         notification_id_key = f'last_notification_id_{user_id}'
         
-        # user_data wird pro User gespeichert, application.user_data ist globaler
         if user_id not in context.application.user_data:
             context.application.user_data[user_id] = {}
 
@@ -94,7 +93,7 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: s
                 )
                 return
             except error.TelegramError:
-                pass # Nachricht existiert nicht mehr, sende eine neue
+                pass
         try:
             sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
             context.application.user_data[user_id][notification_id_key] = sent_message.message_id
@@ -155,8 +154,7 @@ async def restore_stats_from_pinned_message(application: Application):
         chat = await application.bot.get_chat(chat_id=NOTIFICATION_GROUP_ID)
         if not chat.pinned_message or "Bot-Statistik Dashboard" not in chat.pinned_message.text:
             logger.warning("Keine passende Dashboard-Nachricht gefunden."); return
-        pinned_text = chat.pinned_message.text
-        stats = load_stats()
+        pinned_text = chat.pinned_message.text; stats = load_stats()
         def extract(p, t): return int(re.search(p, t).group(1)) if re.search(p, t) else 0
         stats['events']['start_command'] = extract(r"Starts insgesamt:\s*(\d+)", pinned_text)
         stats['events']['payment_paypal'] = extract(r"PayPal Klicks:\s*(\d+)", pinned_text)
@@ -169,8 +167,7 @@ async def restore_stats_from_pinned_message(application: Application):
         stats['events']['next_preview'] = extract(r"'Nächstes Bild' Klicks:\s*(\d+)", pinned_text)
         stats['events']['package_selected'] = extract(r"Paketauswahl:\s*(\d+)", pinned_text)
         stats['pinned_message_id'] = chat.pinned_message.message_id
-        save_stats(stats)
-        logger.info("Statistiken erfolgreich wiederhergestellt.")
+        save_stats(stats); logger.info("Statistiken erfolgreich wiederhergestellt.")
     except Exception as e:
         logger.error(f"Fehler bei Wiederherstellung: {e}")
 
@@ -194,11 +191,8 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id; image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
     if not image_paths:
         await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
-    index_key = f'preview_index_{schwester_code}'
-    current_index = context.user_data.get(index_key, -1)
-    next_index = current_index + 1
-    if next_index >= len(image_paths):
-        next_index = 0
+    index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
+    if next_index >= len(image_paths): next_index = 0
     context.user_data[index_key] = next_index
     image_to_show_path = image_paths[next_index]
     with open(image_to_show_path, 'rb') as photo_file:
@@ -237,7 +231,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query; await query.answer(); data = query.data; chat_id = update.effective_chat.id; user = update.effective_user
     if data == "download_vouchers_pdf":
         await query.answer("PDF wird erstellt...")
-        vouchers = load_vouchers(); pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(0, 10, "Gutschein Report", ln=True, align='C'); pdf.ln(10)
+        vouchers = load_vouchers(); pdf = FPDF()
+        pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(0, 10, "Gutschein Report", ln=True, align='C'); pdf.ln(10)
         pdf.set_font("Arial", 'B', size=14); pdf.cell(0, 10, "Amazon Gutscheine", ln=True); pdf.set_font("Arial", size=12)
         if vouchers.get("amazon", []):
             for code in vouchers["amazon"]: pdf.cell(0, 8, f"- {code.encode('latin-1', 'ignore').decode('latin-1')}", ln=True)
@@ -319,7 +314,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         payment_type = payment_type_full.split('_')[1]
         if payment_type == "paypal":
             await track_event("payment_paypal", context, user.id); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.", user.id)
-            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link...")
+            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif payment_type == "voucher":
             await track_event("payment_voucher", context, user.id); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.", user.id)
@@ -359,7 +354,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         user = update.effective_user; provider = context.user_data.pop("awaiting_voucher"); code = update.message.text
         vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
         notification_text = (f"📬 *Neuer Gutschein erhalten!*\n\n*Anbieter:* {provider.capitalize()}\n*Code:* `{code}`\n*Von Nutzer:* `{user.id}` ({user.first_name})")
-        await send_admin_notification(context, notification_text, user.id)
+        await send_admin_notification(context, notification_text, 0)
         await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
