@@ -177,8 +177,8 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     image_to_show_path = image_paths[next_index]
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-    if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
-    else: caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+    if schwester_code == 'gs': caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
+    else: caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
     keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
@@ -367,9 +367,13 @@ async def set_summary_message(update, context):
     stats = load_stats(); stats["pinned_message_id"] = None; save_stats(stats)
     await update_pinned_summary(context)
 
-async def main():
-    """Startet den Bot und initialisiert alles."""
-    application = Application.builder().token(BOT_TOKEN).build()
+async def post_init(application: Application):
+    """Diese Funktion wird nach der Initialisierung ausgeführt."""
+    await restore_stats_from_pinned_message(application)
+
+def main() -> None:
+    """Startet den Bot."""
+    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
@@ -377,29 +381,19 @@ async def main():
     application.add_handler(CommandHandler("setsummary", set_summary_message))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-
-    async with application:
-        await application.initialize()
-        await restore_stats_from_pinned_message(application)
-        
-        if WEBHOOK_URL:
-            await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-            port = int(os.environ.get('PORT', 8443))
-            
-            # Dies ist eine einfache Methode, um den Webhook-Server am Leben zu erhalten
-            class WebhookUpdater:
-                async def start(self):
-                    logger.info(f"Webhook Server wird gestartet auf Port {port}")
-                    # Hier könnte ein echter Webserver wie aiohttp oder uvicorn stehen,
-                    # aber für Render reicht es oft, wenn das Programm einfach läuft.
-                    while True:
-                        await asyncio.sleep(3600)
-            
-            updater = WebhookUpdater()
-            await updater.start()
-        else:
-            logger.info("Starte Bot im Polling-Modus")
-            await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    if WEBHOOK_URL:
+        port = int(os.environ.get("PORT", 8443))
+        logger.info(f"Starte Webhook-Server auf Port {port}")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        )
+    else:
+        logger.info("Starte Bot im Polling-Modus")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
