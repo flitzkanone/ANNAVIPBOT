@@ -340,14 +340,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    await update.message.reply_text(
-        f"Die ID für diesen Chat ist: `{chat_id}`\n\n"
-        "Kopiere diese Zahl (inklusive Minuszeichen!) und trage sie in Render als `NOTIFICATION_GROUP_ID` ein.",
-        parse_mode='Markdown'
-    )
-
 async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
@@ -365,7 +357,6 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
-    application.add_handler(CommandHandler("getid", get_id))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     
