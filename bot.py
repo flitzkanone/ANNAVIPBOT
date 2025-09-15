@@ -106,40 +106,31 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id
     image_paths = get_media_files(schwester_code, "vorschau")
     image_paths.sort()
-
     if not image_paths:
         await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
-
     index_key = f'preview_index_{schwester_code}'
-    
     if not is_next_click:
         current_index = -1
         if index_key in context.user_data:
              del context.user_data[index_key]
     else:
         current_index = context.user_data.get(index_key, -1)
-    
     next_index = current_index + 1
     if next_index >= len(image_paths):
         next_index = 0
-
     context.user_data[index_key] = next_index
     image_to_show_path = image_paths[next_index]
-    
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-
     if schwester_code == 'gs':
         caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
     else:
         caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
-    
     keyboard_buttons = [
         [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
         [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")],
         [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]
     ]
-    
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
 
@@ -148,11 +139,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     is_new = track_new_user(user.id)
     track_event("start_command")
-    
     if is_new and str(user.id) != ADMIN_USER_ID:
         message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}\n*Zeitstempel:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         await send_admin_notification(context, message)
-
     context.user_data.clear()
     chat_id = update.effective_chat.id
     await cleanup_previous_messages(chat_id, context)
@@ -351,9 +340,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
-# --- NEU: Temporärer Befehl zum Abfragen der Chat-ID ---
 async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ein temporärer Befehl, um die Chat-ID zu bekommen."""
     chat_id = update.effective_chat.id
     await update.message.reply_text(
         f"Die ID für diesen Chat ist: `{chat_id}`\n\n"
@@ -378,4 +365,14 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("addvoucher", add_voucher))
-    # --- NE
+    application.add_handler(CommandHandler("getid", get_id))
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    
+    if WEBHOOK_URL:
+        application.run_webhook(listen="0.0.0.0", port=int(os.environ.get('PORT', 8443)), url_path=BOT_TOKEN, webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+    else:
+        application.run_polling()
+
+if __name__ == "__main__":
+    main()
