@@ -355,6 +355,10 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Fehler: Anbieter muss 'amazon' oder 'paysafe' sein."); return
     code = " ".join(context.args[1:]); vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
     await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** erfolgreich hinzugefügt:\n`{code}`", parse_mode='Markdown')
+async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ein temporärer Befehl, um die Chat-ID zu bekommen."""
+    chat_id = update.effective_chat.id
+    await update.message.reply_text(f"Die ID für diesen Chat ist: `{chat_id}`", parse_mode='Markdown')
 
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
