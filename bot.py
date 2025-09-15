@@ -100,9 +100,10 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
 
     if schwester_code == 'gs':
-        caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
+        caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
+
     else:
-        caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
+        caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
     
     keyboard_buttons = [
         [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
