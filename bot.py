@@ -75,12 +75,26 @@ async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         await update_pinned_summary(context)
     return is_new
 
-async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str):
+async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str, user_id: int = None):
     if NOTIFICATION_GROUP_ID:
+        if user_id and 'last_notification_id' in context.user_data:
+            try:
+                await context.bot.delete_message(chat_id=NOTIFICATION_GROUP_ID, message_id=context.user_data['last_notification_id'])
+            except error.TelegramError:
+                pass
         try:
-            await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
+            sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
+            if user_id:
+                context.user_data['last_notification_id'] = sent_message.message_id
         except Exception as e:
             logger.error(f"Konnte Benachrichtigung nicht an Gruppe {NOTIFICATION_GROUP_ID} senden: {e}")
+
+async def delete_last_admin_notification(context: ContextTypes.DEFAULT_TYPE):
+    if NOTIFICATION_GROUP_ID and 'last_notification_id' in context.user_data:
+        try:
+            await context.bot.delete_message(chat_id=NOTIFICATION_GROUP_ID, message_id=context.user_data.pop('last_notification_id'))
+        except error.TelegramError:
+            pass
 
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
@@ -162,24 +176,31 @@ async def cleanup_previous_messages(chat_id: int, context: ContextTypes.DEFAULT_
             except error.TelegramError: pass
         del context.user_data["messages_to_delete"]
 
-async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, schwester_code: str, is_next_click: bool = False):
+async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, schwester_code: str):
     chat_id = update.effective_chat.id; image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
     if not image_paths:
         await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
     index_key = f'preview_index_{schwester_code}'
-    if not is_next_click:
-        current_index = -1
-        if index_key in context.user_data: del context.user_data[index_key]
-    else: current_index = context.user_data.get(index_key, -1)
+    current_index = context.user_data.get(index_key, -1)
     next_index = current_index + 1
-    if next_index >= len(image_paths): next_index = 0
+    if next_index >= len(image_paths):
+        next_index = 0
     context.user_data[index_key] = next_index
     image_to_show_path = image_paths[next_index]
+    
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-    if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
-    else: caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
-    keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
+
+    if schwester_code == 'gs':
+        caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
+    else:
+        caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+    
+    keyboard_buttons = [
+        [InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")],
+        [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")],
+        [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]
+    ]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
 
@@ -282,8 +303,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("next_preview:"):
         await track_event("next_preview", context)
         _, schwester_code = data.split(":")
-        await cleanup_previous_messages(chat_id, context)
-        await send_preview_message(update, context, schwester_code, is_next_click=True)
+        if "messages_to_delete" in context.user_data and len(context.user_data["messages_to_delete"]) > 0:
+            photo_message_id = context.user_data["messages_to_delete"][0]
+            image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
+            index_key = f'preview_index_{schwester_code}'
+            current_index = context.user_data.get(index_key, 0)
+            next_index = current_index + 1
+            if next_index >= len(image_paths): next_index = 0
+            context.user_data[index_key] = next_index
+            image_to_show_path = image_paths[next_index]
+            try:
+                with open(image_to_show_path, 'rb') as photo_file:
+                    await context.bot.edit_message_media(chat_id=chat_id, message_id=photo_message_id, media=InputMediaPhoto(photo_file))
+            except error.TelegramError as e:
+                logger.warning(f"Konnte Bild nicht bearbeiten, sende neu: {e}")
+                await cleanup_previous_messages(chat_id, context)
+                await send_preview_message(update, context, schwester_code)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context)
         await cleanup_previous_messages(chat_id, context);
@@ -298,15 +333,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user = update.effective_user; payment_type_full, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
         payment_type = payment_type_full.split('_')[1]
         if payment_type == "paypal":
-            await track_event("payment_paypal", context); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.")
+            await track_event("payment_paypal", context); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.", user.id)
             paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif payment_type == "voucher":
-            await track_event("payment_voucher", context); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.")
+            await track_event("payment_voucher", context); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.", user.id)
             text = "Welchen Gutschein möchtest du einlösen?"; keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif payment_type == "crypto":
-            await track_event("payment_crypto", context); await send_admin_notification(context, f"🪙 *Krypto Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Krypto bezahlen.")
+            await track_event("payment_crypto", context); await send_admin_notification(context, f"🪙 *Krypto Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Krypto bezahlen.", user.id)
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("show_wallet:"):
@@ -320,21 +355,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
 
-async def show_admin_menu(update, context):
+async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔒 *Admin-Menü*\n\nWähle eine Option:"
     keyboard = [[InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users")], [InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")], [InlineKeyboardButton("🎟️ Gutscheine anzeigen", callback_data="admin_show_vouchers")], [InlineKeyboardButton("🔄 Statistiken zurücksetzen", callback_data="admin_reset_stats")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def show_vouchers_panel(update, context):
+async def show_vouchers_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vouchers = load_vouchers(); amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"; paysafe_codes = "\n".join([f"- `{code}`" for code in vouchers.get("paysafe", [])]) or "Keine"
     text = (f"*Eingelöste Gutscheine*\n\n*Amazon:*\n{amazon_codes}\n\n*Paysafe:*\n{paysafe_codes}")
     keyboard = [[InlineKeyboardButton("📄 Vouchers als PDF laden", callback_data="download_vouchers_pdf")], [InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def handle_text_message(update, context):
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get("awaiting_admin_password"):
         password = update.message.text; del context.user_data["awaiting_admin_password"]
         if password == ADMIN_PASSWORD: await show_admin_menu(update, context)
@@ -346,10 +381,10 @@ async def handle_text_message(update, context):
         await send_admin_notification(context, notification_text)
         await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
 
-async def admin(update, context):
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["awaiting_admin_password"] = True; await update.message.reply_text("Bitte gib jetzt das Admin-Passwort ein:")
 
-async def add_voucher(update, context):
+async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if len(context.args) < 2: await update.message.reply_text("⚠️ Falsches Format:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
@@ -358,7 +393,7 @@ async def add_voucher(update, context):
     code = " ".join(context.args[1:]); vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
     await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** hinzugefügt:\n`{code}`", parse_mode='Markdown')
 
-async def set_summary_message(update, context):
+async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if str(update.effective_chat.id) != NOTIFICATION_GROUP_ID:
@@ -368,7 +403,7 @@ async def set_summary_message(update, context):
     await update_pinned_summary(context)
 
 async def post_init(application: Application):
-    """Diese Funktion wird nach der Initialisierung ausgeführt."""
+    """Wird nach der Initialisierung des Bots ausgeführt."""
     await restore_stats_from_pinned_message(application)
 
 def main() -> None:
