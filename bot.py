@@ -37,8 +37,6 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
-admin_notification_ids = {}
-
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -55,7 +53,7 @@ def load_stats():
     try:
         with open(STATS_FILE, "r") as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): 
-        return {"pinned_message_id": None, "users": {}, "events": {}}
+        return {"pinned_message_id": None, "users": {}, "admin_logs": {}, "events": {}}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=4)
@@ -93,29 +91,36 @@ async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = "", base_text_override: str = None):
     if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
-        log_id_key = f'admin_log_message_id_{user.id}'
-        base_text_key = f'admin_log_base_text_{user.id}'
+        user_id_str = str(user.id)
+        stats = load_stats()
+        admin_logs = stats.get("admin_logs", {})
         
-        if user.id not in admin_notification_ids:
-            admin_notification_ids[user.id] = {}
-        
-        base_text = admin_notification_ids[user.id].get(base_text_key)
-        log_message_id = admin_notification_ids[user.id].get(log_id_key)
+        user_log = admin_logs.get(user_id_str, {})
+        base_text = user_log.get("base_text")
+        log_message_id = user_log.get("message_id")
 
         if base_text_override:
             base_text = base_text_override
-            admin_notification_ids[user.id][base_text_key] = base_text
+            user_log["base_text"] = base_text
+        
+        if not base_text:
+            base_text = f"👤 *Nutzer-Aktivität*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            user_log["base_text"] = base_text
         
         final_text = f"{base_text}\n\n`Aktion: {event_text}`".strip() if event_text else base_text
-
+        
         if log_message_id:
             try:
                 await context.bot.edit_message_text(chat_id=NOTIFICATION_GROUP_ID, message_id=log_message_id, text=final_text, parse_mode='Markdown')
+                stats["admin_logs"][user_id_str] = user_log
+                save_stats(stats)
                 return
             except error.TelegramError: pass
         try:
             sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=final_text, parse_mode='Markdown')
-            admin_notification_ids[user.id][log_id_key] = sent_message.message_id
+            user_log["message_id"] = sent_message.message_id
+            stats["admin_logs"][user_id_str] = user_log
+            save_stats(stats)
         except Exception as e:
             logger.error(f"Konnte Admin-Log nicht senden/bearbeiten: {e}")
 
@@ -180,7 +185,7 @@ async def restore_stats_from_pinned_message(application: Application):
         stats['events']['preview_gs'] = extract(r"Vorschau \(GS\):\s*(\d+)", pinned_text)
         stats['events']['prices_ks'] = extract(r"Preise \(KS\):\s*(\d+)", pinned_text)
         stats['events']['prices_gs'] = extract(r"Preise \(GS\):\s*(\d+)", pinned_text)
-        stats['events']['next_preview'] = extract(r"'Nächstes Bild' Klicks:\s*(\d+)", pinned_text)
+        stats['events']['next_preview'] = 0
         stats['events']['package_selected'] = extract(r"Paketauswahl:\s*(\d+)", pinned_text)
         stats['pinned_message_id'] = chat.pinned_message.message_id
         save_stats(stats); logger.info("Statistiken erfolgreich wiederhergestellt.")
@@ -278,7 +283,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("✅ Ja, zurücksetzen", callback_data="admin_reset_stats_confirm")], [InlineKeyboardButton("❌ Nein, abbrechen", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_reset_stats_confirm":
-        stats = load_stats(); stats["users"] = {}; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
+        stats = load_stats(); stats["users"] = {}; stats["admin_logs"] = {}; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
         await update_pinned_summary(context)
         await query.edit_message_text("✅ Alle Statistiken wurden zurückgesetzt.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]))
     elif data in ["show_preview_options", "show_price_options"]:
@@ -291,7 +296,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception: pass
         _, schwester_code, action = data.split(":")
         await track_event(f"{action}_{schwester_code}", context, user.id)
-        await send_or_update_admin_log(context, user, f"Vorschau {schwester_code.upper()}")
+        await send_or_update_admin_log(context, user, f"Schaut sich {action} von {schwester_code.upper()} an")
         if action == "preview": await send_preview_message(update, context, schwester_code)
         elif action == "prices":
             image_paths = get_media_files(schwester_code, "preis"); image_paths.sort()
@@ -304,11 +309,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data="select_package:videos:10")], [InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data="select_package:videos:25")], [InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data="select_package:videos:35")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
             text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
             context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
-    elif data.startswith("next_preview:"):
-        await track_event("next_preview", context, user.id)
-        _, schwester_code = data.split(":")
-        await cleanup_previous_messages(chat_id, context)
-        await send_preview_message(update, context, schwester_code)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
         await cleanup_previous_messages(chat_id, context);
@@ -320,35 +320,34 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:", "show_wallet:", "voucher_provider:")):
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(2)
         except Exception: pass
-        
         parts = data.split(":")
-        payment_type_full, media_type, amount_str = parts[0], parts[1], parts[2]
-        amount = int(amount_str); price = PRICES[media_type][amount]
-        
         if data.startswith("pay_paypal:"):
+            _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             await track_event("payment_paypal", context, user.id); await send_or_update_admin_log(context, user, f"💰 PayPal für {price}€")
             paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
             keyboard = [[InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
         elif data.startswith("pay_voucher:"):
+            _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             await track_event("payment_voucher", context, user.id); await send_or_update_admin_log(context, user, f"🎟️ Gutschein für {price}€")
             text = "Welchen Gutschein möchtest du einlösen?"; keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon:{media_type}:{amount}"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("pay_crypto:"):
+            _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             await track_event("payment_crypto", context, user.id); await send_or_update_admin_log(context, user, f"🪙 Krypto für {price}€")
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nSende den Gegenwert von **{price}€**...\n\n2️⃣ **Wallet-Adresse:**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke einen **Screenshot** an **@Anna_2008_030**.")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             keyboard = [[InlineKeyboardButton("« Zurück zur Krypto-Wahl", callback_data=f"pay_crypto:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
-            _, provider, media_type, amount_str = parts; amount = int(amount_str)
+            _, provider, media_type, amount_str = parts
             context.user_data["awaiting_voucher"] = provider
-            text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code."
-            keyboard = [[InlineKeyboardButton("Abbrechen", callback_data=f"pay_voucher:{media_type}:{amount}")]]
+            text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
+            keyboard = [[InlineKeyboardButton("Abbrechen", callback_data=f"pay_voucher:{media_type}:{amount_str}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
