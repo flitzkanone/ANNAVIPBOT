@@ -37,8 +37,6 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
-admin_notification_ids = {}
-
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -55,7 +53,7 @@ def load_stats():
     try:
         with open(STATS_FILE, "r") as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): 
-        return {"pinned_message_id": None, "users": {}, "admin_logs": {}, "events": {}}
+        return {"pinned_message_id": None, "users": {}, "events": {}}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=4)
@@ -67,82 +65,23 @@ async def track_event(event_name: str, context: ContextTypes.DEFAULT_TYPE, user_
     save_stats(stats)
     await update_pinned_summary(context)
 
-async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    if str(user_id) == ADMIN_USER_ID: return "admin", False
+async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    if str(user_id) == ADMIN_USER_ID: return False
     stats = load_stats()
-    user_id_str = str(user_id)
-    now = datetime.now()
-    user_data = stats.get("users", {}).get(user_id_str)
-    
-    if user_data is None:
-        stats.get("users", {})[user_id_str] = {"last_start": now.isoformat()}
+    is_new = False
+    if str(user_id) not in stats.get("users", {}):
+        stats.get("users", {})[str(user_id)] = {"last_start": datetime.now().isoformat()}
         save_stats(stats)
+        is_new = True
         await update_pinned_summary(context)
-        return "new", True
+    return is_new
 
-    last_start_dt = datetime.fromisoformat(user_data.get("last_start"))
-    
-    if now - last_start_dt > timedelta(hours=24):
-        stats["users"][user_id_str]["last_start"] = now.isoformat()
-        save_stats(stats)
-        return "returning", True
-    
-    stats["users"][user_id_str]["last_start"] = now.isoformat()
-    save_stats(stats)
-    return "active", False
-
-async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = "", base_text_override: str = None):
-    if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
-        user_id_str = str(user.id)
-        stats = load_stats()
-        admin_logs = stats.get("admin_logs", {})
-        
-        user_log = admin_logs.get(user_id_str, {})
-        base_text = user_log.get("base_text")
-        log_message_id = user_log.get("message_id")
-
-        if base_text_override:
-            base_text = base_text_override
-            user_log["base_text"] = base_text
-        
-        if not base_text:
-            base_text = f"👤 *Nutzer-Aktivität*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
-            user_log["base_text"] = base_text
-        
-        final_text = f"{base_text}\n\n`Aktion: {event_text}`".strip() if event_text else base_text
-        
-        if log_message_id:
-            try:
-                await context.bot.edit_message_text(chat_id=NOTIFICATION_GROUP_ID, message_id=log_message_id, text=final_text, parse_mode='Markdown')
-                stats["admin_logs"][user_id_str] = user_log
-                save_stats(stats)
-                return
-            except error.TelegramError: pass
-        try:
-            sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=final_text, parse_mode='Markdown')
-            user_log["message_id"] = sent_message.message_id
-            stats["admin_logs"][user_id_str] = user_log
-            save_stats(stats)
-        except Exception as e:
-            logger.error(f"Konnte Admin-Log nicht senden/bearbeiten: {e}")
-
-async def delete_last_admin_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
-        stats = load_stats()
-        admin_logs = stats.get("admin_logs", {})
-        user_log = admin_logs.get(str(user_id))
-        if user_log and "message_id" in user_log:
-            try:
-                await context.bot.delete_message(chat_id=NOTIFICATION_GROUP_ID, message_id=user_log["message_id"])
-                del stats["admin_logs"][str(user_id)]
-                save_stats(stats)
-            except error.TelegramError: pass
-
-async def send_permanent_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str):
+async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str):
     if NOTIFICATION_GROUP_ID:
         try:
             await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
-        except Exception as e: logger.error(f"Konnte permanente Benachrichtigung nicht senden: {e}")
+        except Exception as e:
+            logger.error(f"Konnte Benachrichtigung nicht an Gruppe {NOTIFICATION_GROUP_ID} senden: {e}")
 
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
@@ -238,15 +177,11 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    status, should_notify = await check_user_status(user.id, context)
+    is_new = await track_new_user(user.id, context)
     await track_event("start_command", context, user.id)
-    if should_notify:
-        if status == "new":
-            message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
-            await send_or_update_admin_log(context, user, base_text_override=message)
-        elif status == "returning":
-            message = f"🔄 *Wiederkehrender Nutzer!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
-            await send_or_update_admin_log(context, user, base_text_override=message)
+    if is_new:
+        message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+        await send_admin_notification(context, message)
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
     welcome_text = ( "Herzlich Willkommen! ✨\n\n" "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. " "Die gesamte Bedienung erfolgt über die Buttons.")
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
@@ -276,8 +211,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1')); pdf_buffer.seek(0)
         today_str = datetime.now().strftime("%Y-%m-%d"); await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
         return
-    if data in ["main_menu", "show_price_options"]:
-        await delete_last_admin_notification(context, user.id)
+    if data in ["main_menu", "show_preview_options", "show_price_options"]:
         await cleanup_previous_messages(chat_id, context)
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(0.5)
         except Exception: pass
@@ -313,7 +247,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception: pass
         _, schwester_code, action = data.split(":")
         await track_event(f"{action}_{schwester_code}", context, user.id)
-        await send_or_update_admin_log(context, user, f"Schaut sich {action} von {schwester_code.upper()} an")
         if action == "preview": await send_preview_message(update, context, schwester_code)
         elif action == "prices":
             image_paths = get_media_files(schwester_code, "preis"); image_paths.sort()
@@ -329,7 +262,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("next_preview:"):
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
-        await send_or_update_admin_log(context, user, f"Nächstes Bild ({schwester_code.upper()})")
         image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
         index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, 0); next_index = current_index + 1
         if next_index >= len(image_paths): next_index = 0
@@ -358,18 +290,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         parts = data.split(":")
         if data.startswith("pay_paypal:"):
             _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
-            await track_event("payment_paypal", context, user.id); await send_or_update_admin_log(context, user, f"💰 PayPal für {price}€")
-            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
+            await track_event("payment_paypal", context, user.id); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.")
+            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link...")
             keyboard = [[InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown', disable_web_page_preview=True)
         elif data.startswith("pay_voucher:"):
             _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
-            await track_event("payment_voucher", context, user.id); await send_or_update_admin_log(context, user, f"🎟️ Gutschein für {price}€")
+            await track_event("payment_voucher", context, user.id); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.")
             text = "Welchen Gutschein möchtest du einlösen?"; keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon:{media_type}:{amount}"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("pay_crypto:"):
             _, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
-            await track_event("payment_crypto", context, user.id); await send_or_update_admin_log(context, user, f"🪙 Krypto für {price}€")
+            await track_event("payment_crypto", context, user.id); await send_admin_notification(context, f"🪙 *Krypto Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Krypto bezahlen.")
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("show_wallet:"):
