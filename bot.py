@@ -125,6 +125,15 @@ async def send_permanent_admin_notification(context: ContextTypes.DEFAULT_TYPE, 
             await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
         except Exception as e: logger.error(f"Konnte permanente Benachrichtigung nicht senden: {e}")
 
+async def delete_last_admin_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
+        log_id_key = f'admin_log_message_id_{user_id}'
+        if user_id in admin_notification_ids and log_id_key in admin_notification_ids[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=NOTIFICATION_GROUP_ID, message_id=admin_notification_ids[user_id].pop(log_id_key))
+            except error.TelegramError:
+                pass
+
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
     stats = load_stats()
@@ -256,8 +265,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1')); pdf_buffer.seek(0)
         today_str = datetime.now().strftime("%Y-%m-%d"); await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
         return
-    if data in ["main_menu", "show_preview_options", "show_price_options", "select_package"]:
-        if not data.startswith("select_package"): await delete_last_admin_notification(context, user.id)
+    if data in ["main_menu", "show_preview_options", "show_price_options"]:
         await cleanup_previous_messages(chat_id, context)
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(0.5)
         except Exception: pass
@@ -308,20 +316,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("next_preview:"):
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
-        image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
-        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
-        if next_index >= len(image_paths): next_index = 0
-        context.user_data[index_key] = next_index
-        image_to_show_path = image_paths[next_index]
-        if "messages_to_delete" in context.user_data and len(context.user_data["messages_to_delete"]) > 0:
-            photo_message_id = context.user_data["messages_to_delete"][0]
-            try:
-                with open(image_to_show_path, 'rb') as photo_file:
-                    await context.bot.edit_message_media(chat_id=chat_id, message_id=photo_message_id, media=InputMediaPhoto(photo_file))
-            except error.TelegramError as e:
-                logger.warning(f"Konnte Bild nicht bearbeiten, sende neu: {e}")
-                await cleanup_previous_messages(chat_id, context)
-                await send_preview_message(update, context, schwester_code)
+        await cleanup_previous_messages(chat_id, context)
+        await send_preview_message(update, context, schwester_code, is_next_click=True)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
         await cleanup_previous_messages(chat_id, context);
@@ -333,11 +329,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:", "show_wallet:", "voucher_provider:")):
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(2)
         except Exception: pass
-        
         if data.startswith("pay_paypal:"):
             _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
             await track_event("payment_paypal", context, user.id); await send_or_update_admin_log(context, user, f"\n\n💰 *PayPal Klick!*\nMöchte ein Paket für *{price}€* kaufen.")
-            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
+            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link...")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif data.startswith("pay_voucher:"):
             _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
@@ -352,7 +347,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n_(Nutze einen aktuellen Umrechner.)_\n\n2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** an **@Anna_2008_030**.")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
             _, provider = data.split(":")
