@@ -3,13 +3,13 @@ import logging
 import json
 import random
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
 import asyncio
 import re
 
 from fpdf import FPDF
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto, User
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,7 +55,7 @@ def load_stats():
     try:
         with open(STATS_FILE, "r") as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): 
-        return {"pinned_message_id": None, "users": {}, "events": {}}
+        return {"pinned_message_id": None, "total_users": [], "events": {}}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=4)
@@ -67,38 +67,18 @@ async def track_event(event_name: str, context: ContextTypes.DEFAULT_TYPE, user_
     save_stats(stats)
     await update_pinned_summary(context)
 
-# --- GEÄNDERT: track_new_user prüft jetzt Zeitstempel ---
-async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    if str(user_id) == ADMIN_USER_ID: return "admin", False
-    
+async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    if str(user_id) == ADMIN_USER_ID: return False
     stats = load_stats()
-    user_id_str = str(user_id)
-    now = datetime.now()
-    
-    user_data = stats.get("users", {}).get(user_id_str)
-    
-    if user_data is None:
-        # Komplett neuer Nutzer
-        stats["users"][user_id_str] = {"last_start": now.isoformat()}
+    is_new = False
+    if user_id not in stats["total_users"]:
+        stats["total_users"].append(user_id)
         save_stats(stats)
+        is_new = True
         await update_pinned_summary(context)
-        return "new", True
+    return is_new
 
-    last_start_str = user_data.get("last_start")
-    last_start_dt = datetime.fromisoformat(last_start_str)
-    
-    if now - last_start_dt > timedelta(hours=24):
-        # Wiederkehrender Nutzer nach >24h
-        stats["users"][user_id_str]["last_start"] = now.isoformat()
-        save_stats(stats)
-        return "returning", True
-    
-    # Aktiver Nutzer innerhalb von 24h
-    stats["users"][user_id_str]["last_start"] = now.isoformat()
-    save_stats(stats)
-    return "active", False
-
-async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Update.user, event_text: str = "", base_text_override: str = None):
+async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = "", base_text_override: str = None):
     if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
         log_id_key = f'admin_log_message_id_{user.id}'
         base_text_key = f'admin_log_base_text_{user.id}'
@@ -139,7 +119,9 @@ async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     events = stats.get("events", {})
     text = (
         f"📊 *Bot-Statistik Dashboard*\n_(Letztes Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})_\n\n"
-        f"👤 *Nutzer Gesamt:* {user_count}\n🚀 *Starts insgesamt:* {events.get('start_command', 0)}\n\n"
+        f"👤 *Nutzer Gesamt:* {user_count}\n"
+        f"🟢 *Aktive Nutzer (24h):* {len([uid for uid, data in stats.get('users', {}).items() if datetime.now() - datetime.fromisoformat(data['last_start']) <= timedelta(hours=24)])}\n"
+        f"🚀 *Starts insgesamt:* {events.get('start_command', 0)}\n\n"
         f"--- *Bezahl-Interesse* ---\n💰 *PayPal Klicks:* {events.get('payment_paypal', 0)}\n🪙 *Krypto Klicks:* {events.get('payment_crypto', 0)}\n🎟️ *Gutschein Klicks:* {events.get('payment_voucher', 0)}\n\n"
         f"--- *Klick-Verhalten* ---\n▪️ Vorschau (KS): {events.get('preview_ks', 0)}\n▪️ Vorschau (GS): {events.get('preview_gs', 0)}\n"
         f"▪️ Preise (KS): {events.get('prices_ks', 0)}\n▪️ Preise (GS): {events.get('prices_gs', 0)}\n"
@@ -168,11 +150,9 @@ async def restore_stats_from_pinned_message(application: Application):
         pinned_text = chat.pinned_message.text; stats = load_stats()
         def extract(p, t): return int(re.search(p, t).group(1)) if re.search(p, t) else 0
         user_count = extract(r"Nutzer Gesamt:\s*(\d+)", pinned_text)
-        # Wir können die User-IDs nicht wiederherstellen, aber die Anzahl
         if len(stats.get("users", {})) < user_count:
-            # Füge Platzhalter hinzu, um die Zählung konsistent zu halten
             for i in range(user_count - len(stats.get("users", {}))):
-                stats["users"][f"restored_{i}"] = {"last_start": datetime.now().isoformat()}
+                stats["users"][f"restored_user_{i}"] = {"last_start": "1970-01-01T00:00:00"}
         stats['events']['start_command'] = extract(r"Starts insgesamt:\s*(\d+)", pinned_text)
         stats['events']['payment_paypal'] = extract(r"PayPal Klicks:\s*(\d+)", pinned_text)
         stats['events']['payment_crypto'] = extract(r"Krypto Klicks:\s*(\d+)", pinned_text)
@@ -228,9 +208,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif status == "returning":
             message = f"🔄 *Wiederkehrender Nutzer!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
             await send_or_update_admin_log(context, user, base_text_override=message)
-
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
-    welcome_text = ("Herzlich Willkommen! ✨\n\n" "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. " "Die gesamte Bedienung erfolgt über die Buttons.")
+    welcome_text = ( "Herzlich Willkommen! ✨\n\n" "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. " "Die gesamte Bedienung erfolgt über die Buttons.")
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -358,21 +337,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
 
-async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_admin_menu(update, context):
     text = "🔒 *Admin-Menü*\n\nWähle eine Option:"
     keyboard = [[InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users")], [InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")], [InlineKeyboardButton("🎟️ Gutscheine anzeigen", callback_data="admin_show_vouchers")], [InlineKeyboardButton("🔄 Statistiken zurücksetzen", callback_data="admin_reset_stats")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def show_vouchers_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_vouchers_panel(update, context):
     vouchers = load_vouchers(); amazon_codes = "\n".join([f"- `{code}`" for code in vouchers.get("amazon", [])]) or "Keine"; paysafe_codes = "\n".join([f"- `{code}`" for code in vouchers.get("paysafe", [])]) or "Keine"
     text = (f"*Eingelöste Gutscheine*\n\n*Amazon:*\n{amazon_codes}\n\n*Paysafe:*\n{paysafe_codes}")
     keyboard = [[InlineKeyboardButton("📄 Vouchers als PDF laden", callback_data="download_vouchers_pdf")], [InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_text_message(update, context):
     if context.user_data.get("awaiting_voucher"):
         user = update.effective_user; provider = context.user_data.pop("awaiting_voucher"); code = update.message.text
         vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
@@ -380,14 +359,14 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_permanent_admin_notification(context, notification_text)
         await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def admin(update, context):
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
         await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl.")
         return
     await show_admin_menu(update, context)
 
-async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def add_voucher(update, context):
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if len(context.args) < 2: await update.message.reply_text("⚠️ Falsches Format:\n`/addvoucher <anbieter> <code...>`", parse_mode='Markdown'); return
@@ -396,7 +375,7 @@ async def add_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     code = " ".join(context.args[1:]); vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
     await update.message.reply_text(f"✅ Gutschein für **{provider.capitalize()}** hinzugefügt:\n`{code}`", parse_mode='Markdown')
 
-async def set_summary_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def set_summary_message(update, context):
     user_id = str(update.effective_user.id)
     if not ADMIN_USER_ID or user_id != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung."); return
     if str(update.effective_chat.id) != NOTIFICATION_GROUP_ID:
