@@ -37,6 +37,9 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
+# Globaler Speicher für Admin-Nachrichten-IDs, da user_data pro Update-Typ isoliert sein kann
+admin_notification_ids = {}
+
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -76,34 +79,39 @@ async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         await update_pinned_summary(context)
     return is_new
 
-async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str, user_id: int):
-    if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
-        notification_id_key = f'last_notification_id_{user_id}'
-        if user_id not in context.application.user_data:
-            context.application.user_data[user_id] = {}
-        if notification_id_key in context.application.user_data[user_id]:
+async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Update.user, event_text: str = ""):
+    if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
+        log_id_key = f'admin_log_message_id_{user.id}'
+        base_text_key = f'admin_log_base_text_{user.id}'
+        
+        if user.id not in admin_notification_ids:
+            admin_notification_ids[user.id] = {}
+        
+        base_text = admin_notification_ids[user.id].get(base_text_key)
+        log_message_id = admin_notification_ids[user.id].get(log_id_key)
+
+        if not event_text:
+            base_text = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            admin_notification_ids[user.id][base_text_key] = base_text
+        
+        final_text = f"{base_text}\n{event_text}".strip()
+
+        if log_message_id:
             try:
-                await context.bot.edit_message_text(
-                    chat_id=NOTIFICATION_GROUP_ID,
-                    message_id=context.application.user_data[user_id][notification_id_key],
-                    text=message,
-                    parse_mode='Markdown'
-                )
+                await context.bot.edit_message_text(chat_id=NOTIFICATION_GROUP_ID, message_id=log_message_id, text=final_text, parse_mode='Markdown')
                 return
             except error.TelegramError: pass
         try:
-            sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
-            context.application.user_data[user_id][notification_id_key] = sent_message.message_id
+            sent_message = await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=final_text, parse_mode='Markdown')
+            admin_notification_ids[user.id][log_id_key] = sent_message.message_id
         except Exception as e:
-            logger.error(f"Konnte Benachrichtigung nicht an Gruppe {NOTIFICATION_GROUP_ID} senden: {e}")
+            logger.error(f"Konnte Admin-Log nicht senden/bearbeiten: {e}")
 
-async def delete_last_admin_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    if NOTIFICATION_GROUP_ID and str(user_id) != ADMIN_USER_ID:
-        notification_id_key = f'last_notification_id_{user_id}'
-        if notification_id_key in context.application.user_data.get(user_id, {}):
-            try:
-                await context.bot.delete_message(chat_id=NOTIFICATION_GROUP_ID, message_id=context.application.user_data[user_id].pop(notification_id_key))
-            except error.TelegramError: pass
+async def send_permanent_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str):
+    if NOTIFICATION_GROUP_ID:
+        try:
+            await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=message, parse_mode='Markdown')
+        except Exception as e: logger.error(f"Konnte permanente Benachrichtigung nicht senden: {e}")
 
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
@@ -174,9 +182,8 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id; image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
     if not image_paths:
         await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
-    index_key = f'preview_index_{schwester_code}'; context.user_data[index_key] = -1 # Reset index
+    index_key = f'preview_index_{schwester_code}'; context.user_data[index_key] = 0
     image_to_show_path = image_paths[0]
-    context.user_data[index_key] = 0
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
     if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
@@ -190,8 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     is_new = await track_new_user(user.id, context)
     await track_event("start_command", context, user.id)
     if is_new:
-        message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}\n*Zeitstempel:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        await send_admin_notification(context, message, user.id)
+        await send_or_update_admin_log(context, user)
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
     welcome_text = (
         "Herzlich Willkommen! ✨\n\n"
@@ -226,7 +232,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         today_str = datetime.now().strftime("%Y-%m-%d"); await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{today_str}.pdf", caption="Hier ist dein aktueller Gutschein-Report.")
         return
     if data in ["main_menu", "show_preview_options", "show_price_options"]:
-        await delete_last_admin_notification(context, user.id)
         await cleanup_previous_messages(chat_id, context)
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(0.5)
         except Exception: pass
@@ -278,7 +283,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
         image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
-        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, 0); next_index = current_index + 1
+        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
         if next_index >= len(image_paths): next_index = 0
         context.user_data[index_key] = next_index
         image_to_show_path = image_paths[next_index]
@@ -305,15 +310,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception: pass
         payment_type_full, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
         if data.startswith("pay_paypal:"):
-            await track_event("payment_paypal", context, user.id); await send_admin_notification(context, f"💰 *PayPal Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* kaufen.", user.id)
+            await track_event("payment_paypal", context, user.id); await send_or_update_admin_log(context, user, f"\n\n💰 *PayPal Klick!*\nMöchte ein Paket für *{price}€* kaufen.")
             paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif data.startswith("pay_voucher:"):
-            await track_event("payment_voucher", context, user.id); await send_admin_notification(context, f"🎟️ *Gutschein Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Gutschein bezahlen.", user.id)
+            await track_event("payment_voucher", context, user.id); await send_or_update_admin_log(context, user, f"\n\n🎟️ *Gutschein Klick!*\nMöchte ein Paket für *{price}€* mit Gutschein bezahlen.")
             text = "Welchen Gutschein möchtest du einlösen?"; keyboard = [[InlineKeyboardButton("Amazon", callback_data=f"voucher_provider:amazon"), InlineKeyboardButton("Paysafe", callback_data=f"voucher_provider:paysafe")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount_str}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data.startswith("pay_crypto:"):
-            await track_event("payment_crypto", context, user.id); await send_admin_notification(context, f"🪙 *Krypto Klick!*\nNutzer `{user.id}` ({user.first_name}) möchte ein Paket für *{price}€* mit Krypto bezahlen.", user.id)
+            await track_event("payment_crypto", context, user.id); await send_or_update_admin_log(context, user, f"\n\n🪙 *Krypto Klick!*\nMöchte ein Paket für *{price}€* mit Krypto bezahlen.")
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     elif data.startswith("show_wallet:"):
@@ -346,7 +351,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         user = update.effective_user; provider = context.user_data.pop("awaiting_voucher"); code = update.message.text
         vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
         notification_text = (f"📬 *Neuer Gutschein erhalten!*\n\n*Anbieter:* {provider.capitalize()}\n*Code:* `{code}`\n*Von Nutzer:* `{user.id}` ({user.first_name})")
-        await send_admin_notification(context, notification_text, 0)
+        await send_permanent_admin_notification(context, notification_text)
         await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt..."); await start(update, context)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
