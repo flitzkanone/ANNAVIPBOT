@@ -9,7 +9,7 @@ import asyncio
 import re
 
 from fpdf import FPDF
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto, User
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,7 +37,7 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
-# Globaler Speicher für Admin-Nachrichten-IDs, da user_data pro Update-Typ isoliert sein kann
+# Globaler Speicher für Admin-Nachrichten-IDs
 admin_notification_ids = {}
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -79,7 +79,8 @@ async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         await update_pinned_summary(context)
     return is_new
 
-async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Update.user, event_text: str = ""):
+# --- KORRIGIERT: Funktionsdefinition ---
+async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = ""):
     if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
         log_id_key = f'admin_log_message_id_{user.id}'
         base_text_key = f'admin_log_base_text_{user.id}'
@@ -283,7 +284,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
         image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
-        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
+        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, 0); next_index = current_index + 1
         if next_index >= len(image_paths): next_index = 0
         context.user_data[index_key] = next_index
         image_to_show_path = image_paths[next_index]
@@ -298,20 +299,19 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await send_preview_message(update, context, schwester_code)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
-        await delete_last_admin_notification(context, user.id)
         await cleanup_previous_messages(chat_id, context);
         try: await query.message.delete()
         except Exception: pass
         _, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]; text = f"Du hast das Paket **{amount} {media_type.capitalize()}** für **{price}€** ausgewählt.\n\nWie möchtest du bezahlen?"
         keyboard = [[InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(" Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:")):
+    elif data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:", "show_wallet:", "voucher_provider:")):
         try: await query.edit_message_text(text="⏳"); await asyncio.sleep(2)
         except Exception: pass
         payment_type_full, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
         if data.startswith("pay_paypal:"):
             await track_event("payment_paypal", context, user.id); await send_or_update_admin_log(context, user, f"\n\n💰 *PayPal Klick!*\nMöchte ein Paket für *{price}€* kaufen.")
-            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link, um die Zahlung für **{amount} {media_type.capitalize()}** in Höhe von **{price}€** abzuschließen.\n\nGib als Verwendungszweck bitte deinen Telegram-Namen an.\n\n➡️ [Hier sicher bezahlen]({paypal_link})")
+            paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"; text = (f"Super! Klicke auf den Link...")
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown', disable_web_page_preview=True)
         elif data.startswith("pay_voucher:"):
             await track_event("payment_voucher", context, user.id); await send_or_update_admin_log(context, user, f"\n\n🎟️ *Gutschein Klick!*\nMöchte ein Paket für *{price}€* mit Gutschein bezahlen.")
@@ -321,16 +321,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await track_event("payment_crypto", context, user.id); await send_or_update_admin_log(context, user, f"\n\n🪙 *Krypto Klick!*\nMöchte ein Paket für *{price}€* mit Krypto bezahlen.")
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zur Bezahlwahl", callback_data=f"select_package:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    elif data.startswith("show_wallet:"):
-        _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
-        wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-        text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nBitte sende den exakten Gegenwert von **{price}€** in {crypto_name}.\n_(Nutze einen aktuellen Umrechner, z.B. auf Binance oder Coinbase.)_\n\n2️⃣ **Wallet-Adresse (zum Kopieren):**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke mir nach der Transaktion einen **Screenshot** oder die **Transaktions-ID** an **@Anna_2008_030**, damit ich deine Zahlung zuordnen kann.")
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
-    elif data.startswith("voucher_provider:"):
-        _, provider = data.split(":")
-        context.user_data["awaiting_voucher"] = provider
-        text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
+        elif data.startswith("show_wallet:"):
+            _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = PRICES[media_type][amount]
+            wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
+            text = (f"Zahlung mit **{crypto_name}** ...")
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
+        elif data.startswith("voucher_provider:"):
+            _, provider = data.split(":")
+            context.user_data["awaiting_voucher"] = provider
+            text = f"Bitte sende mir jetzt deinen {provider.capitalize()}-Gutschein-Code als einzelne Nachricht."
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Abbrechen", callback_data="main_menu")]]))
 
 async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔒 *Admin-Menü*\n\nWähle eine Option:"
