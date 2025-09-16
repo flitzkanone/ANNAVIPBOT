@@ -1,5 +1,6 @@
 {
-  "total_users": [],
+  "pinned_message_id": null,
+  "users": {},
   "events": {
     "start_command": 0,
     "preview_ks": 0,
