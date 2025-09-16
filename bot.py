@@ -9,7 +9,7 @@ import asyncio
 import re
 
 from fpdf import FPDF
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto, User
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,7 +55,7 @@ def load_stats():
     try:
         with open(STATS_FILE, "r") as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): 
-        return {"pinned_message_id": None, "total_users": [], "events": {}}
+        return {"pinned_message_id": None, "users": {}, "events": {}}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=4)
@@ -67,18 +67,31 @@ async def track_event(event_name: str, context: ContextTypes.DEFAULT_TYPE, user_
     save_stats(stats)
     await update_pinned_summary(context)
 
-async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    if str(user_id) == ADMIN_USER_ID: return False
+async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    if str(user_id) == ADMIN_USER_ID: return "admin", False
     stats = load_stats()
-    is_new = False
-    if user_id not in stats["total_users"]:
-        stats["total_users"].append(user_id)
+    user_id_str = str(user_id)
+    now = datetime.now()
+    user_data = stats.get("users", {}).get(user_id_str)
+    
+    if user_data is None:
+        stats.get("users", {})[user_id_str] = {"last_start": now.isoformat()}
         save_stats(stats)
-        is_new = True
         await update_pinned_summary(context)
-    return is_new
+        return "new", True
 
-async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Update.user, event_text: str = "", base_text_override: str = None):
+    last_start_dt = datetime.fromisoformat(user_data.get("last_start"))
+    
+    if now - last_start_dt > timedelta(hours=24):
+        stats["users"][user_id_str]["last_start"] = now.isoformat()
+        save_stats(stats)
+        return "returning", True
+    
+    stats["users"][user_id_str]["last_start"] = now.isoformat()
+    save_stats(stats)
+    return "active", False
+
+async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = "", base_text_override: str = None):
     if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
         log_id_key = f'admin_log_message_id_{user.id}'
         base_text_key = f'admin_log_base_text_{user.id}'
@@ -115,11 +128,21 @@ async def send_permanent_admin_notification(context: ContextTypes.DEFAULT_TYPE, 
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
     stats = load_stats()
-    user_count = len(stats.get("total_users", []))
+    user_count = len(stats.get("users", {}))
+    
+    active_users_24h = 0
+    now = datetime.now()
+    for user_data in stats.get("users", {}).values():
+        last_start_dt = datetime.fromisoformat(user_data.get("last_start", "1970-01-01T00:00:00"))
+        if now - last_start_dt <= timedelta(hours=24):
+            active_users_24h += 1
+
     events = stats.get("events", {})
     text = (
         f"📊 *Bot-Statistik Dashboard*\n_(Letztes Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})_\n\n"
-        f"👤 *Nutzer Gesamt:* {user_count}\n🚀 *Starts insgesamt:* {events.get('start_command', 0)}\n\n"
+        f"👤 *Nutzer Gesamt:* {user_count}\n"
+        f"🟢 *Aktive Nutzer (24h):* {active_users_24h}\n"
+        f"🚀 *Starts insgesamt:* {events.get('start_command', 0)}\n\n"
         f"--- *Bezahl-Interesse* ---\n💰 *PayPal Klicks:* {events.get('payment_paypal', 0)}\n🪙 *Krypto Klicks:* {events.get('payment_crypto', 0)}\n🎟️ *Gutschein Klicks:* {events.get('payment_voucher', 0)}\n\n"
         f"--- *Klick-Verhalten* ---\n▪️ Vorschau (KS): {events.get('preview_ks', 0)}\n▪️ Vorschau (GS): {events.get('preview_gs', 0)}\n"
         f"▪️ Preise (KS): {events.get('prices_ks', 0)}\n▪️ Preise (GS): {events.get('prices_gs', 0)}\n"
@@ -147,10 +170,10 @@ async def restore_stats_from_pinned_message(application: Application):
             logger.warning("Keine passende Dashboard-Nachricht gefunden."); return
         pinned_text = chat.pinned_message.text; stats = load_stats()
         def extract(p, t): return int(re.search(p, t).group(1)) if re.search(p, t) else 0
-        user_count_from_msg = extract(r"Nutzer Gesamt:\s*(\d+)", pinned_text)
-        # Stellt sicher, dass die User-Liste mindestens so viele Einträge hat
-        if len(stats.get("total_users", [])) < user_count_from_msg:
-             stats["total_users"] = [f"restored_{i}" for i in range(user_count_from_msg)]
+        user_count = extract(r"Nutzer Gesamt:\s*(\d+)", pinned_text)
+        if len(stats.get("users", {})) < user_count:
+            for i in range(user_count - len(stats.get("users", {}))):
+                stats["users"][f"restored_user_{i}"] = {"last_start": "1970-01-01T00:00:00"}
         stats['events']['start_command'] = extract(r"Starts insgesamt:\s*(\d+)", pinned_text)
         stats['events']['payment_paypal'] = extract(r"PayPal Klicks:\s*(\d+)", pinned_text)
         stats['events']['payment_crypto'] = extract(r"Krypto Klicks:\s*(\d+)", pinned_text)
@@ -189,25 +212,25 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     image_to_show_path = image_paths[0]
     with open(image_to_show_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-    if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
-    else: caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+    if schwester_code == 'gs': caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
+    else: caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
     keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    is_new = await track_new_user(user.id, context)
+    status, should_notify = await check_user_status(user.id, context)
     await track_event("start_command", context, user.id)
-    if is_new:
-        message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
-        await send_or_update_admin_log(context, user, base_text_override=message)
+    if should_notify:
+        if status == "new":
+            message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            await send_or_update_admin_log(context, user, base_text_override=message)
+        elif status == "returning":
+            message = f"🔄 *Wiederkehrender Nutzer!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            await send_or_update_admin_log(context, user, base_text_override=message)
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
-    welcome_text = (
-        "Herzlich Willkommen! ✨\n\n"
-        "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
-        "Die gesamte Bedienung erfolgt über die Buttons."
-    )
+    welcome_text = ( "Herzlich Willkommen! ✨\n\n" "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. " "Die gesamte Bedienung erfolgt über die Buttons.")
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -243,7 +266,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "admin_main_menu": await show_admin_menu(update, context)
     elif data == "admin_show_vouchers": await show_vouchers_panel(update, context)
     elif data == "admin_stats_users":
-        stats = load_stats(); user_count = len(stats.get("total_users", []))
+        stats = load_stats(); user_count = len(stats.get("users", {}))
         text = f"📊 *Nutzer-Statistiken*\n\nGesamtzahl der Nutzer: *{user_count}*"; keyboard = [[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_stats_clicks":
@@ -258,7 +281,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("✅ Ja, zurücksetzen", callback_data="admin_reset_stats_confirm")], [InlineKeyboardButton("❌ Nein, abbrechen", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_reset_stats_confirm":
-        stats = load_stats(); stats["total_users"] = []; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
+        stats = load_stats(); stats["users"] = {}; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
         await update_pinned_summary(context)
         await query.edit_message_text("✅ Alle Statistiken wurden zurückgesetzt.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]))
     elif data in ["show_preview_options", "show_price_options"]:
@@ -286,8 +309,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("next_preview:"):
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
-        await cleanup_previous_messages(chat_id, context)
-        await send_preview_message(update, context, schwester_code, is_next_click=True)
+        image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
+        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
+        if next_index >= len(image_paths): next_index = 0
+        context.user_data[index_key] = next_index
+        image_to_show_path = image_paths[next_index]
+        if "messages_to_delete" in context.user_data and len(context.user_data["messages_to_delete"]) > 0:
+            photo_message_id = context.user_data["messages_to_delete"][0]
+            try:
+                with open(image_to_show_path, 'rb') as photo_file:
+                    await context.bot.edit_message_media(chat_id=chat_id, message_id=photo_message_id, media=InputMediaPhoto(photo_file))
+            except error.TelegramError as e:
+                logger.warning(f"Konnte Bild nicht bearbeiten, sende neu: {e}")
+                await cleanup_previous_messages(chat_id, context)
+                await send_preview_message(update, context, schwester_code)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
         await cleanup_previous_messages(chat_id, context);
