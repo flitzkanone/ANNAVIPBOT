@@ -3,13 +3,13 @@ import logging
 import json
 import random
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 import asyncio
 import re
 
 from fpdf import FPDF
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto, User
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,7 +37,6 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
-# Globaler Speicher für Admin-Nachrichten-IDs
 admin_notification_ids = {}
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -56,7 +55,7 @@ def load_stats():
     try:
         with open(STATS_FILE, "r") as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError): 
-        return {"pinned_message_id": None, "total_users": [], "events": {}}
+        return {"pinned_message_id": None, "users": {}, "events": {}}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=4)
@@ -68,19 +67,38 @@ async def track_event(event_name: str, context: ContextTypes.DEFAULT_TYPE, user_
     save_stats(stats)
     await update_pinned_summary(context)
 
-async def track_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    if str(user_id) == ADMIN_USER_ID: return False
+# --- GEÄNDERT: track_new_user prüft jetzt Zeitstempel ---
+async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    if str(user_id) == ADMIN_USER_ID: return "admin", False
+    
     stats = load_stats()
-    is_new = False
-    if user_id not in stats["total_users"]:
-        stats["total_users"].append(user_id)
+    user_id_str = str(user_id)
+    now = datetime.now()
+    
+    user_data = stats.get("users", {}).get(user_id_str)
+    
+    if user_data is None:
+        # Komplett neuer Nutzer
+        stats["users"][user_id_str] = {"last_start": now.isoformat()}
         save_stats(stats)
-        is_new = True
         await update_pinned_summary(context)
-    return is_new
+        return "new", True
 
-# --- KORRIGIERT: Funktionsdefinition ---
-async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = ""):
+    last_start_str = user_data.get("last_start")
+    last_start_dt = datetime.fromisoformat(last_start_str)
+    
+    if now - last_start_dt > timedelta(hours=24):
+        # Wiederkehrender Nutzer nach >24h
+        stats["users"][user_id_str]["last_start"] = now.isoformat()
+        save_stats(stats)
+        return "returning", True
+    
+    # Aktiver Nutzer innerhalb von 24h
+    stats["users"][user_id_str]["last_start"] = now.isoformat()
+    save_stats(stats)
+    return "active", False
+
+async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Update.user, event_text: str = "", base_text_override: str = None):
     if NOTIFICATION_GROUP_ID and str(user.id) != ADMIN_USER_ID:
         log_id_key = f'admin_log_message_id_{user.id}'
         base_text_key = f'admin_log_base_text_{user.id}'
@@ -91,8 +109,8 @@ async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Use
         base_text = admin_notification_ids[user.id].get(base_text_key)
         log_message_id = admin_notification_ids[user.id].get(log_id_key)
 
-        if not event_text:
-            base_text = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+        if base_text_override:
+            base_text = base_text_override
             admin_notification_ids[user.id][base_text_key] = base_text
         
         final_text = f"{base_text}\n{event_text}".strip()
@@ -117,7 +135,7 @@ async def send_permanent_admin_notification(context: ContextTypes.DEFAULT_TYPE, 
 async def update_pinned_summary(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
     stats = load_stats()
-    user_count = len(stats.get("total_users", []))
+    user_count = len(stats.get("users", {}))
     events = stats.get("events", {})
     text = (
         f"📊 *Bot-Statistik Dashboard*\n_(Letztes Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})_\n\n"
@@ -149,6 +167,12 @@ async def restore_stats_from_pinned_message(application: Application):
             logger.warning("Keine passende Dashboard-Nachricht gefunden."); return
         pinned_text = chat.pinned_message.text; stats = load_stats()
         def extract(p, t): return int(re.search(p, t).group(1)) if re.search(p, t) else 0
+        user_count = extract(r"Nutzer Gesamt:\s*(\d+)", pinned_text)
+        # Wir können die User-IDs nicht wiederherstellen, aber die Anzahl
+        if len(stats.get("users", {})) < user_count:
+            # Füge Platzhalter hinzu, um die Zählung konsistent zu halten
+            for i in range(user_count - len(stats.get("users", {}))):
+                stats["users"][f"restored_{i}"] = {"last_start": datetime.now().isoformat()}
         stats['events']['start_command'] = extract(r"Starts insgesamt:\s*(\d+)", pinned_text)
         stats['events']['payment_paypal'] = extract(r"PayPal Klicks:\s*(\d+)", pinned_text)
         stats['events']['payment_crypto'] = extract(r"Krypto Klicks:\s*(\d+)", pinned_text)
@@ -195,16 +219,18 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    is_new = await track_new_user(user.id, context)
+    status, should_notify = await check_user_status(user.id, context)
     await track_event("start_command", context, user.id)
-    if is_new:
-        await send_or_update_admin_log(context, user)
+    if should_notify:
+        if status == "new":
+            message = f"🎉 *Neuer Nutzer gestartet!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            await send_or_update_admin_log(context, user, base_text_override=message)
+        elif status == "returning":
+            message = f"🔄 *Wiederkehrender Nutzer!*\n\n*ID:* `{user.id}`\n*Name:* {user.first_name}"
+            await send_or_update_admin_log(context, user, base_text_override=message)
+
     context.user_data.clear(); chat_id = update.effective_chat.id; await cleanup_previous_messages(chat_id, context)
-    welcome_text = (
-        "Herzlich Willkommen! ✨\n\n"
-        "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. "
-        "Die gesamte Bedienung erfolgt über die Buttons."
-    )
+    welcome_text = ("Herzlich Willkommen! ✨\n\n" "Hier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. " "Die gesamte Bedienung erfolgt über die Buttons.")
     keyboard = [[InlineKeyboardButton(" Vorschau", callback_data="show_preview_options")], [InlineKeyboardButton(" Preise & Pakete", callback_data="show_price_options")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -240,7 +266,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "admin_main_menu": await show_admin_menu(update, context)
     elif data == "admin_show_vouchers": await show_vouchers_panel(update, context)
     elif data == "admin_stats_users":
-        stats = load_stats(); user_count = len(stats.get("total_users", []))
+        stats = load_stats(); user_count = len(stats.get("users", {}))
         text = f"📊 *Nutzer-Statistiken*\n\nGesamtzahl der Nutzer: *{user_count}*"; keyboard = [[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_stats_clicks":
@@ -255,7 +281,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("✅ Ja, zurücksetzen", callback_data="admin_reset_stats_confirm")], [InlineKeyboardButton("❌ Nein, abbrechen", callback_data="admin_main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == "admin_reset_stats_confirm":
-        stats = load_stats(); stats["total_users"] = []; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
+        stats = load_stats(); stats["users"] = {}; stats["events"] = {key: 0 for key in stats["events"]}; save_stats(stats)
         await update_pinned_summary(context)
         await query.edit_message_text("✅ Alle Statistiken wurden zurückgesetzt.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Admin-Menü", callback_data="admin_main_menu")]]))
     elif data in ["show_preview_options", "show_price_options"]:
@@ -284,7 +310,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await track_event("next_preview", context, user.id)
         _, schwester_code = data.split(":")
         image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
-        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, 0); next_index = current_index + 1
+        index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, -1); next_index = current_index + 1
         if next_index >= len(image_paths): next_index = 0
         context.user_data[index_key] = next_index
         image_to_show_path = image_paths[next_index]
