@@ -37,6 +37,8 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
+admin_notification_ids = {}
+
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -225,9 +227,8 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     random_image_path = random.choice(image_paths)
     with open(random_image_path, 'rb') as photo_file:
         photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
-    if schwester_code == 'gs': caption = 
-f"Heyy ich bin Anna, ich bin {AGE_ANNA} Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
-    else: caption = f"Heyy, mein name ist Luna ich bin {AGE_LUNA} Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+    if schwester_code == 'gs': caption = f"Heyy ich bin Anna und {AGE_ANNA} alt."
+    else: caption = f"Heyy ich bin Luna und {AGE_LUNA} alt."
     keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
