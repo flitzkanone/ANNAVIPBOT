@@ -6,6 +6,7 @@
     "start_command": 0,
     "preview_ks": 0,
     "preview_gs": 0,
+    "next_preview": 0,
     "prices_ks": 0,
     "prices_gs": 0,
     "package_selected": 0,
