@@ -321,6 +321,24 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard_buttons = [[InlineKeyboardButton("10 Bilder", callback_data="select_package:bilder:10"), InlineKeyboardButton("10 Videos", callback_data="select_package:videos:10")], [InlineKeyboardButton("25 Bilder", callback_data="select_package:bilder:25"), InlineKeyboardButton("25 Videos", callback_data="select_package:videos:25")], [InlineKeyboardButton("35 Bilder", callback_data="select_package:bilder:35"), InlineKeyboardButton("35 Videos", callback_data="select_package:videos:35")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
             text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons))
             context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
+    elif data.startswith("next_preview:"):
+        await track_event("next_preview", context, user.id)
+        _, schwester_code = data.split(":")
+        await send_or_update_admin_log(context, user, f"Nächstes Bild ({schwester_code.upper()})")
+        if "messages_to_delete" in context.user_data and len(context.user_data["messages_to_delete"]) > 0:
+            photo_message_id = context.user_data["messages_to_delete"][0]
+            image_paths = get_media_files(schwester_code, "vorschau"); image_paths.sort()
+            index_key = f'preview_index_{schwester_code}'; current_index = context.user_data.get(index_key, 0); next_index = current_index + 1
+            if next_index >= len(image_paths): next_index = 0
+            context.user_data[index_key] = next_index
+            image_to_show_path = image_paths[next_index]
+            try:
+                with open(image_to_show_path, 'rb') as photo_file:
+                    await context.bot.edit_message_media(chat_id=chat_id, message_id=photo_message_id, media=InputMediaPhoto(photo_file))
+            except error.TelegramError as e:
+                logger.warning(f"Konnte Bild nicht bearbeiten, sende neu: {e}")
+                await cleanup_previous_messages(chat_id, context)
+                await send_preview_message(update, context, schwester_code)
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
         await cleanup_previous_messages(chat_id, context);
@@ -352,7 +370,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}**...\n\n1️⃣ **Betrag:**\nSende den Gegenwert von **{price}€**...\n\n2️⃣ **Wallet-Adresse:**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke einen **Screenshot** an **@Anna_2008_030**.")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             keyboard = [[InlineKeyboardButton("« Zurück zur Krypto-Wahl", callback_data=f"pay_crypto:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
