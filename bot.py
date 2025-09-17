@@ -37,8 +37,6 @@ VOUCHER_FILE = "vouchers.json"
 STATS_FILE = "stats.json"
 MEDIA_DIR = "image"
 
-admin_notification_ids = {}
-
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -355,7 +353,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("show_wallet:"):
             _, crypto_type, media_type, amount_str = parts; amount = int(amount_str); price = PRICES[media_type][amount]
             wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
-            text = (f"Zahlung mit **{crypto_name}** für das Paket **{amount} {media_type.capitalize()}**.\n\n1️⃣ **Betrag:**\nSende den Gegenwert von **{price}€**...\n\n2️⃣ **Wallet-Adresse:**\n`{wallet_address}`\n\n3️⃣ **WICHTIG:**\nSchicke einen **Screenshot** an **@Anna_2008_030**.")
+            text = (f"Zahlung mit **{crypto_name}** ...")
             keyboard = [[InlineKeyboardButton("« Zurück zur Krypto-Wahl", callback_data=f"pay_crypto:{media_type}:{amount}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         elif data.startswith("voucher_provider:"):
@@ -429,4 +427,12 @@ def main() -> None:
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
-            url
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        )
+    else:
+        logger.info("Starte Bot im Polling-Modus")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
