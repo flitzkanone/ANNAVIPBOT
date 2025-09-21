@@ -218,8 +218,11 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not image_paths: await context.bot.send_message(chat_id=chat_id, text="Ups! Ich konnte gerade keine passenden Inhalte finden...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="main_menu")]])); return
     context.user_data[f'preview_index_{schwester_code}'] = 0; image_to_show_path = image_paths[0]
     with open(image_to_show_path, 'rb') as photo_file: photo_message = await context.bot.send_photo(chat_id=chat_id, photo=photo_file, protect_content=True)
+    
+    # --- KORREKTUR HIER ---
     if schwester_code == 'gs': caption = f"Heyy ich bin Anna, ich bin <tg-spoiler>{AGE_ANNA}</tg-spoiler> Jahre alt und mache mit meiner Schwester zusammen 🌶️ videos und Bilder falls du lust hast speziele videos zu bekommen schreib mir 😏 @Anna_2008_030"
     else: caption = f"Heyy, mein name ist Luna ich bin <tg-spoiler>{AGE_LUNA}</tg-spoiler> Jahre alt und mache 🌶️ videos und Bilder. wenn du Spezielle wünsche hast schreib meiner Schwester für mehr.\nMeine Schwester: @Anna_2008_030"
+    
     keyboard_buttons = [[InlineKeyboardButton("🛍️ Zu den Preisen", callback_data=f"select_schwester:{schwester_code}:prices")], [InlineKeyboardButton("🖼️ Nächstes Bild", callback_data=f"next_preview:{schwester_code}")], [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]
     text_message = await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard_buttons), parse_mode='HTML')
     context.user_data["messages_to_delete"] = [photo_message.message_id, text_message.message_id]
@@ -284,9 +287,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data == "main_menu": await start(update, context); return
     if data.startswith("admin_"):
         if str(user.id) != ADMIN_USER_ID: await query.answer("⛔️ Keine Berechtigung.", show_alert=True); return
+        
+        # --- KORREKTUR HIER ---
         if not data.startswith(("admin_discount", "admin_delete_", "admin_preview_")):
             for key in list(context.user_data.keys()):
-                if key.startswith(('rabatt_', 'awaiting_')): del context.user_data[key]
+                # Verhindert, dass der Gutschein-Flow unterbrochen wird
+                if key.startswith(('rabatt_', 'awaiting_')) and key != 'awaiting_voucher':
+                    del context.user_data[key]
+
         if data == "admin_main_menu": await show_admin_menu(update, context)
         elif data == "admin_show_vouchers": await show_vouchers_panel(update, context)
         elif data == "admin_stats_users":
@@ -446,13 +454,44 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if context.user_data.get('awaiting_user_id_for_discount_deletion'): await handle_admin_delete_user_discount_input(update, context); return
         if context.user_data.get('awaiting_user_id_for_preview_limit'): await handle_admin_preview_limit_input(update, context); return
 
+    # --- KOMPLETT NEUER BLOCK FÜR GUTSCHIEN-BESTÄTIGUNG ---
     if context.user_data.get("awaiting_voucher"):
-        provider = context.user_data.pop("awaiting_voucher"); code = text_input; vouchers = load_vouchers(); vouchers[provider].append(code); save_vouchers(vouchers)
-        notification_text = (f"📬 *Neuer Gutschein erhalten!*\n\n*Anbieter:* {provider.capitalize()}\n*Code:* `{code}`\n*Von Nutzer:* {escape_markdown(user.first_name, version=2)} (`{user.id}`)")
-        await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=notification_text, parse_mode='Markdown')
-        await send_or_update_admin_log(context, user, event_text=f"Gutschein '{provider}' eingereicht")
+        provider = context.user_data.pop("awaiting_voucher")
+        code = text_input
+        vouchers = load_vouchers()
+        vouchers[provider].append(code)
+        save_vouchers(vouchers)
+
+        notification_text = (
+            f"📬 *Neuer Gutschein erhalten!* 📬\n\n"
+            f"*Anbieter:* {provider.capitalize()}\n"
+            f"*Code:* `{code}`\n"
+            f"*Von Nutzer:* {escape_markdown(user.first_name, version=2)} (`{user.id}`)\n\n"
+            f"⚠️ *AKTION ERFORDERLICH:* Bitte Code prüfen und den Nutzer manuell freischalten."
+        )
+        if NOTIFICATION_GROUP_ID:
+            await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=notification_text, parse_mode='Markdown')
+        
+        await send_or_update_admin_log(context, user, event_text=f"Gutschein '{provider}' eingereicht (wartet auf Prüfung)")
+        
         await process_referral_reward(user.id, context)
-        await update.message.reply_text("Vielen Dank! Dein Gutschein wurde übermittelt und wird nun geprüft. Ich melde mich bei dir."); await asyncio.sleep(2); await start(update, context)
+
+        user_confirmation_text = (
+            "✅ Vielen Dank! Dein Gutschein wurde erfolgreich übermittelt.\n\n"
+            "Die manuelle Überprüfung dauert in der Regel **10-20 Minuten**. "
+            "Sobald dein Code verifiziert ist, melde ich mich bei dir und du erhältst Zugriff auf deine Inhalte. "
+            "Bitte habe einen Moment Geduld."
+        )
+        
+        user_confirmation_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]
+        ])
+
+        await update.message.reply_text(
+            text=user_confirmation_text,
+            reply_markup=user_confirmation_keyboard,
+            parse_mode='Markdown'
+        )
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if str(update.effective_user.id) != ADMIN_USER_ID: await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl."); return
@@ -566,8 +605,8 @@ async def execute_manage_preview_limit(update: Update, context: ContextTypes.DEF
     stats = load_stats(); user_data = stats["users"].get(user_id)
     if not user_data: await query_or_message_edit(update, f"Fehler: Nutzer {user_id} nicht gefunden.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="admin_user_manage")]])); return
     current_clicks = user_data.get('preview_clicks', 0)
-    if action == 'reset': new_clicks = 0; verb = "zurückgesetzt"
-    else: new_clicks = current_clicks - 25 if current_clicks > 25 else 0 ; verb = "zurückgesetzt auf 0"
+    if action == 'reset': new_clicks = 0
+    else: new_clicks = current_clicks - 25 if current_clicks > 25 else 0
     stats["users"][user_id]['preview_clicks'] = new_clicks; save_stats(stats)
     text = f"✅ Vorschau-Limit für Nutzer `{user_id}` wurde auf *{new_clicks}* Klicks angepasst."; await query_or_message_edit(update, text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="admin_user_manage")]]))
 
