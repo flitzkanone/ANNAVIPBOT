@@ -5,7 +5,7 @@ from flask import Flask
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options  # <-- DIESE ZEILE HAT GEFEHLT
+from selenium.webdriver.chrome.options import Options  # <-- DIESE ZEILE IST ENTSCHEIDEND UND WAR WEG
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
@@ -20,7 +20,8 @@ app = Flask(__name__)
 def home():
     return "Bot is alive and running!"
 def keep_alive():
-    app.run(host='0.0.b0.0', port=8080)
+    # Der Port wird von Render automatisch zugewiesen, 8080 ist ein guter Standard
+    app.run(host='0.0.0.0', port=8080)
 
 WEBSITE_URL = "http://chatroom2000.de"
 
@@ -48,7 +49,6 @@ def start_bot():
         driver.get(WEBSITE_URL)
         print(f"Seite {WEBSITE_URL} geladen.")
         
-        # ... (der Rest deines Bot-Codes ist korrekt und bleibt unverändert) ...
         try:
             cookie_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Einwilligen')]")))
             cookie_button.click()
