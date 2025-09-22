@@ -88,7 +88,6 @@ def start_bot():
         fertig_button.click()
         print("'Probleme'-Fenster geschlossen. Bot ist jetzt im Chat aktiv.")
 
-        # SCREENSHOT-FUNKTION ALS BESTÄTIGUNG
         print("Erstelle finalen Screenshot vom Chatraum...")
         driver.save_screenshot('final_chat_view.png')
         print("Lade Screenshot hoch...")
@@ -109,7 +108,6 @@ def start_bot():
     except Exception as e:
         print(f"Ein schwerwiegender Fehler ist aufgetreten: {e}")
         if driver:
-            # SCREENSHOT-FUNKTION FÜR FEHLER
             driver.save_screenshot('error_screenshot.png')
             print("Erstelle Fehler-Screenshot und lade ihn hoch...")
             os.system("curl --upload-file ./error_screenshot.png https://transfer.sh/error_screenshot.png")
