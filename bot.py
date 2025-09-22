@@ -5,7 +5,7 @@ from flask import Flask
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options  # <-- DIESE ZEILE IST ENTSCHEIDEND UND WAR WEG
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
@@ -14,25 +14,24 @@ import os
 # WICHTIG: Sage Selenium, dass es den virtuellen Bildschirm nutzen soll.
 os.environ['DISPLAY'] = ':1'
 
-# --- Flask App Code (unverändert) ---
+# --- Flask App Code für Render ---
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is alive and running!"
 def keep_alive():
-    # Der Port wird von Render automatisch zugewiesen, 8080 ist ein guter Standard
     app.run(host='0.0.0.0', port=8080)
 
 WEBSITE_URL = "http://chatroom2000.de"
 
-# --- Chrome Options (jetzt mit korrektem Import) ---
+# --- Chrome Options für die sichtbare Live-Ansicht ---
 chrome_options = Options()
-# Die '--headless' Zeile ist entfernt, damit wir zusehen können
+# '--headless' ist entfernt, damit wir zusehen können
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--start-maximized") # Browser maximiert starten
+chrome_options.add_argument("--window-size=1280,800") # Passend zur virtuellen Bildschirmgröße
 
-# --- Der restliche Code ist unverändert ---
 def generate_random_name():
     random_numbers = random.randint(10, 99)
     name = f"Anna 16 {random_numbers}"
@@ -88,6 +87,12 @@ def start_bot():
         fertig_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Fertig')]")))
         fertig_button.click()
         print("'Probleme'-Fenster geschlossen. Bot ist jetzt im Chat aktiv.")
+
+        # SCREENSHOT-FUNKTION ALS BESTÄTIGUNG
+        print("Erstelle finalen Screenshot vom Chatraum...")
+        driver.save_screenshot('final_chat_view.png')
+        print("Lade Screenshot hoch...")
+        os.system("curl --upload-file ./final_chat_view.png https://transfer.sh/final_chat_view.png")
         
         while True:
             try:
@@ -103,6 +108,11 @@ def start_bot():
                 break
     except Exception as e:
         print(f"Ein schwerwiegender Fehler ist aufgetreten: {e}")
+        if driver:
+            # SCREENSHOT-FUNKTION FÜR FEHLER
+            driver.save_screenshot('error_screenshot.png')
+            print("Erstelle Fehler-Screenshot und lade ihn hoch...")
+            os.system("curl --upload-file ./error_screenshot.png https://transfer.sh/error_screenshot.png")
     finally:
         if driver:
             driver.quit()
