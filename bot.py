@@ -299,6 +299,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"Error in start admin logic for user {user.id}: {e}")
 
     stats = load_stats()
+    stats = ensure_user_in_stats(user.id, stats) # KORREKTUR: Sicherstellen, dass der Nutzer existiert
     stats["users"][str(user.id)]["last_start"] = datetime.now().isoformat()
     save_stats(stats)
 
@@ -419,8 +420,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data.startswith("next_preview:"):
         if 'control_message_id' in context.chat_data:
-            try:
-                await context.bot.delete_message(chat_id, context.chat_data.pop('control_message_id'))
+            try: await context.bot.delete_message(chat_id, context.chat_data.pop('control_message_id'))
             except error.TelegramError: pass
         
         if user_data.get("preview_clicks", 0) >= 25:
