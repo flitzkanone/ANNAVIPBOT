@@ -1,4 +1,4 @@
-# ANNAVIPBOT
+# Telegram Bot - Scam
 
 ## Core Functionality:
 
