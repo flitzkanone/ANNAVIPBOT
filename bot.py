@@ -252,8 +252,7 @@ async def query_or_message_edit(update: Update, text: str, **kwargs):
     if update.callback_query:
         try:
             await update.callback_query.edit_message_text(text, **kwargs)
-            # Make sure this edited message is also tracked for cleanup
-            track_message(update.callback_query.message.get_bot().callback_context, update.callback_query.message.message_id)
+            track_message(context, update.callback_query.message.message_id)
         except error.BadRequest as e:
             if "message is not modified" not in str(e): logger.error(f"Failed to edit message: {e}")
     elif update.message:
@@ -345,25 +344,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     await send_tracked_message(context, chat_id=chat_id, text=welcome_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+# REPARIERT: show_prices_page mit robuster Fehlerbehandlung
 async def show_prices_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
-    await cleanup_bot_messages(chat_id, context)
-    await track_event("prices_viewed", context, user.id)
-    await send_or_update_admin_log(context, user, event_text="Schaut sich die Preise an")
+    
+    try:
+        await cleanup_bot_messages(chat_id, context)
+        await track_event("prices_viewed", context, user.id)
+        await send_or_update_admin_log(context, user, event_text="Schaut sich die Preise an")
 
-    caption = "Wähle dein gewünschtes Paket:"
-    keyboard = get_price_keyboard(user.id)
-    media_paths = get_media_files("videos", "preis")
-    if media_paths:
-        random_media_path = random.choice(media_paths)
-        try:
-            with open(random_media_path, 'rb') as media_file:
-                await send_tracked_video(context, chat_id=chat_id, video=media_file, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), protect_content=True, supports_streaming=True)
-        except error.TelegramError:
-            await send_tracked_message(context, chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
+        caption = "Wähle dein gewünschtes Paket:"
+        keyboard = get_price_keyboard(user.id)
+        
+        media_paths = get_media_files("videos", "preis")
+        
+        if media_paths:
+            random_media_path = random.choice(media_paths)
+            try:
+                with open(random_media_path, 'rb') as media_file:
+                    await send_tracked_video(context, chat_id=chat_id, video=media_file, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), protect_content=True, supports_streaming=True)
+                return # Erfolgreich gesendet, Funktion beenden
+            except Exception as e_video:
+                logger.error(f"Could not send price video {random_media_path}, falling back to text: {e_video}")
+                # Fallback, wenn Video fehlschlägt
+        
+        # Fallback, wenn keine Videos da sind oder das Senden fehlschlägt
         await send_tracked_message(context, chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    except Exception as e:
+        logger.error(f"FATAL ERROR in show_prices_page: {e}")
+        try:
+            await send_tracked_message(context, chat_id=chat_id, text="Ups! Es ist ein Fehler aufgetreten. Bitte versuche es erneut, indem du /start sendest.")
+        except Exception as e_send:
+            logger.error(f"Could not even send error message to user {chat_id}: {e_send}")
 
 async def show_treffen_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -401,7 +415,7 @@ async def show_treffen_summary(update: Update, context: ContextTypes.DEFAULT_TYP
     await send_tracked_message(context, chat_id=chat_id, text="Status: ✅ Dein Wunschtermin ist verfügbar!")
     await send_tracked_message(context, chat_id=chat_id, text=summary_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def get_price_keyboard(user_id: int):
+def get_price_keyboard(user_id: int):
     return [
         [InlineKeyboardButton(get_package_button_text("bilder", 10, user_id), callback_data="select_package:bilder:10"), InlineKeyboardButton(get_package_button_text("videos", 10, user_id), callback_data="select_package:videos:10")],
         [InlineKeyboardButton(get_package_button_text("bilder", 25, user_id), callback_data="select_package:bilder:25"), InlineKeyboardButton(get_package_button_text("videos", 25, user_id), callback_data="select_package:videos:25")],
@@ -541,8 +555,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await track_event(f"preview_{media_type}", context, user.id)
         await send_or_update_admin_log(context, user, event_text="Schaut sich Vorschau an")
         await send_preview_message(update, context, media_type)
+        return
 
-    elif data == "show_price_options": await show_prices_page(update, context)
+    elif data == "show_price_options":
+        await show_prices_page(update, context)
+        return
 
     elif data == "live_call_menu":
         await cleanup_bot_messages(chat_id, context)
@@ -556,6 +573,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if row: keyboard.append(row)
         keyboard.append([InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")])
         await send_tracked_message(context, chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
     elif data == "treffen_menu":
         await cleanup_bot_messages(chat_id, context)
@@ -570,6 +588,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton("🤔 Warum eine Anzahlung?", callback_data="treffen_info_anzahlung_menu")])
         keyboard.append([InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")])
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
     elif data in ["treffen_info_anzahlung_menu", "treffen_info_anzahlung_summary"]:
         text = ("🤔 **Warum eine kleine Anzahlung?** 🤔\n\n"
@@ -635,6 +654,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await send_preview_message(update, context, media_type, start_index=next_index)
         except Exception:
             await send_preview_message(update, context, media_type, start_index=next_index)
+        return
 
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
@@ -664,6 +684,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             
         keyboard = [[InlineKeyboardButton(" PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(" Gutschein (Amazon)", callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton("🪙 Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück zu den Preisen", callback_data="show_price_options")]]
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return
 
     async def update_payment_log(payment_method: str, price_val: int, package_info: str):
         stats_log = load_stats(); user_data_log = stats_log.get("users", {}).get(str(user.id))
@@ -704,6 +725,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await track_event(f"payment_{media_type}", context, user.id); await update_payment_log("Krypto", price, package_info_text)
             text = "Bitte wähle die gewünschte Kryptowährung:"; keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton("« Zurück", callback_data=f"select_package:{media_type}:{amount}")]];
             await original_message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
     elif data.startswith("show_wallet:"):
         _, crypto_type, media_type, amount_str = data.split(":")
@@ -713,6 +735,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         else: base_price = PRICES[media_type][amount]; package_key = f"{media_type}_{amount}"; price = get_discounted_price(base_price, user_data.get("discounts"), package_key); price = price if price != -1 else base_price
         wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET; crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"; text = f"Zahlung mit **{crypto_name}** für **{price}€**.\n\n`{wallet_address}`";
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data=f"pay_crypto:{media_type}:{amount}")]]), parse_mode='Markdown')
+        return
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -763,6 +786,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_or_update_admin_log(context, user, event_text=f"Gutschein '{provider}' eingereicht")
         user_confirmation_text = ("✅ Vielen Dank! Dein Gutschein wurde übermittelt.\n\nDie manuelle Überprüfung dauert ca. **10-20 Minuten**. Sobald dein Code verifiziert ist, melde ich mich bei dir.")
         await send_tracked_message(context, chat_id, text=user_confirmation_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück zum Hauptmenü", callback_data="main_menu")]]), parse_mode='Markdown')
+        return
 
 async def handle_admin_user_management_input(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
     user_id_to_manage = update.message.text; context.user_data[f'awaiting_user_id_for_{action}'] = False
