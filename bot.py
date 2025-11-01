@@ -28,11 +28,10 @@ PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 NOTIFICATION_GROUP_ID = os.getenv("NOTIFICATION_GROUP_ID")
-TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "YourUsername") # Set a default
+TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "YourUsername")
 
 AGE_ANNA = os.getenv("AGE_ANNA", "18")
 
-# Load language-specific captions from .env, with hardcoded fallbacks
 PREVIEW_CAPTION_DE_TPL = os.getenv("PREVIEW_CAPTION_DE", "Hier ist eine Vorschau. Ich bin {age_anna} Jahre alt. Klicke auf 'Nächstes Medium' für mehr.")
 PREVIEW_CAPTION_EN_TPL = os.getenv("PREVIEW_CAPTION_EN", "Here is a preview. I am {age_anna} years old. Click 'Next Medium' for more.")
 
@@ -66,7 +65,7 @@ texts = {
     "banned_user_alert": {"de": "Du bist von der Nutzung dieses Bots ausgeschlossen.", "en": "You are banned from using this bot."},
 
     # Language Selection
-    "language_selection_prompt": {"de": "Bitte wähle deine Sprache:", "en": "Please select your language:"},
+    "language_selection_prompt": {"de": "Bitte wähle deine Sprache / Please select your language:", "en": "Please select your language / Bitte wähle deine Sprache:"},
 
     # Start/Main Menu
     "welcome_text": {"de": "Herzlich Willkommen! ✨\n\nHier kannst du eine Vorschau meiner Inhalte sehen oder direkt ein Paket auswählen. Die gesamte Bedienung erfolgt über die Buttons.", "en": "Welcome! ✨\n\nHere you can see a preview of my content or select a package directly. The entire operation is done via the buttons."},
@@ -168,9 +167,8 @@ texts = {
 }
 
 def get_text(key: str, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> str:
-    """Fetches a string in the user's chosen language."""
     lang = context.user_data.get('language', 'de')
-    text_template = texts.get(key, {}).get(lang) or texts.get(key, {}).get('en', f"<{key}_{lang}_NOT_FOUND>")
+    text_template = texts.get(key, {}).get(lang, texts.get(key, {}).get('de', f"<{key}_{lang}_NOT_FOUND>"))
     return text_template.format(**kwargs)
 
 # --- Helper Functions ---
@@ -202,11 +200,12 @@ def ensure_user_in_stats(user_id: int, stats: dict) -> dict:
             "payments_initiated": [],
             "banned": False,
             "paypal_offer_sent": False,
-            "language": "de" # Default language
+            "language": None # Set to None for first start
         }
         save_stats(stats)
     return stats
 
+# ... (rest of the helper functions remain the same) ...
 async def save_discounts_to_telegram(context: ContextTypes.DEFAULT_TYPE):
     if not NOTIFICATION_GROUP_ID: return
     stats = load_stats(); discounts_to_save = {}
@@ -367,6 +366,7 @@ async def query_or_message_edit(update: Update, context: ContextTypes.DEFAULT_TY
     elif update.message:
         await send_tracked_message(context, chat_id=update.effective_chat.id, text=text, **kwargs)
 
+
 async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, media_type: str, start_index: int = 0):
     chat_id = update.effective_chat.id
     await cleanup_bot_messages(chat_id, context)
@@ -406,12 +406,20 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user; chat_id = update.effective_chat.id
     stats = load_stats(); ensure_user_in_stats(user.id, stats)
-    if 'language' not in context.user_data:
-        context.user_data['language'] = stats["users"][str(user.id)].get("language", "de")
-    if update.message: await cleanup_bot_messages(chat_id, context)
+    user_lang = stats["users"][str(user.id)].get("language")
+
+    await cleanup_bot_messages(chat_id, context)
+
+    if not user_lang:
+        await show_language_selection(update, context, first_time=True)
+        return
+
+    context.user_data['language'] = user_lang
+
     if is_user_banned(user.id):
         await send_tracked_message(context, chat_id=chat_id, text=get_text("banned_user_message", context))
         return
+
     try:
         status, should_notify, user_data = await check_user_status(user.id, context)
         await track_event("start_command", context, user.id)
@@ -429,6 +437,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             event_text = "Bot gestartet (neuer Nutzer)" if status == "new" else "Bot erneut gestartet"
             await send_or_update_admin_log(context, user, event_text=event_text)
     except Exception as e: logger.error(f"Error in start logic for user {user.id}: {e}")
+
     stats["users"][str(user.id)]["last_start"] = datetime.now().isoformat(); save_stats(stats)
     welcome_text = get_text("welcome_text", context)
     keyboard = [
@@ -440,14 +449,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     await query_or_message_edit(update, context, welcome_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def show_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, first_time: bool = False):
     await cleanup_bot_messages(update.effective_chat.id, context)
     keyboard = [
-        [InlineKeyboardButton("Deutsch 🇩🇪", callback_data="select_lang:de"), InlineKeyboardButton("English 🇬🇧", callback_data="select_lang:en")],
-        [InlineKeyboardButton(get_text("back_button", context), callback_data="main_menu")]
+        [InlineKeyboardButton("Deutsch 🇩🇪", callback_data="select_lang:de"), InlineKeyboardButton("English 🇬🇧", callback_data="select_lang:en")]
     ]
-    await query_or_message_edit(update, context, text="Bitte wähle deine Sprache / Please select your language:", reply_markup=InlineKeyboardMarkup(keyboard))
+    if not first_time:
+         keyboard.append([InlineKeyboardButton(get_text("back_button", context), callback_data="main_menu")])
+    text = get_text("language_selection_prompt", context)
+    
+    # Use different methods depending on whether it's a command or button press
+    if update.callback_query:
+        await query_or_message_edit(update, context, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else: # From /start or /switch
+        await send_tracked_message(context, chat_id=update.effective_chat.id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+
+# +++ NEUE FUNKTION +++
+async def switch_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the /switch command to show the language selection menu."""
+    await show_language_selection(update, context, first_time=False)
+
+
+# ... (rest of the functions like show_prices_page, admin menu, etc. remain the same) ...
+
+# (The following code is truncated for brevity, but all the logic from the previous step remains)
+# ... all other functions like show_prices_page, show_treffen_summary, get_price_keyboard, admin, ...
+# ... handle_callback_query, handle_text_message, and admin helpers are unchanged ...
 async def show_prices_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id; user = update.effective_user
     try:
@@ -521,7 +549,6 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👤 Nutzer verwalten", callback_data="admin_user_manage")]]
     await query_or_message_edit(update, context, text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Other admin functions remain the same...
 async def show_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "👤 *Nutzerverwaltung*\n\nWähle eine Aktion aus:"
     keyboard = [
@@ -555,15 +582,22 @@ async def show_manage_discounts_menu(update: Update, context: ContextTypes.DEFAU
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query; await query.answer(); data = query.data
     chat_id = update.effective_chat.id; user = update.effective_user
+
     if data.startswith("select_lang:"):
         lang_code = data.split(":")[1]
         context.user_data['language'] = lang_code
-        stats = load_stats(); stats["users"][str(user.id)]["language"] = lang_code; save_stats(stats)
+        stats = load_stats()
+        # Ensure user exists before trying to set language
+        ensure_user_in_stats(user.id, stats)
+        stats["users"][str(user.id)]["language"] = lang_code
+        save_stats(stats)
         await start(update, context)
         return
+
     if data == "select_lang_menu":
-        await show_language_selection(update, context)
+        await show_language_selection(update, context, first_time=False)
         return
+
     stats = load_stats(); ensure_user_in_stats(user.id, stats)
     user_data = stats["users"][str(user.id)]
     if is_user_banned(user.id):
@@ -572,7 +606,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data == "main_menu":
         await start(update, context)
         return
-    # Admin callbacks...
+    # (Rest of the callback handler remains identical)
+    # ...
+    # (The following code is truncated for brevity, but all the logic from the previous step remains)
     if data.startswith("admin_"):
         if str(user.id) != ADMIN_USER_ID:
             await query.answer("⛔️ Keine Berechtigung.", show_alert=True)
@@ -896,6 +932,8 @@ def main() -> None:
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
+    # +++ NEUER HANDLER +++
+    application.add_handler(CommandHandler("switch", switch_language))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     if WEBHOOK_URL:
