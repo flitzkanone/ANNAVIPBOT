@@ -28,9 +28,13 @@ PAYPAL_USER = os.getenv("PAYPAL_USER")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 NOTIFICATION_GROUP_ID = os.getenv("NOTIFICATION_GROUP_ID")
-TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "ANNASPICY")
+TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "YourUsername") # Set a default
 
 AGE_ANNA = os.getenv("AGE_ANNA", "18")
+
+# Load language-specific captions from .env, with hardcoded fallbacks
+PREVIEW_CAPTION_DE_TPL = os.getenv("PREVIEW_CAPTION_DE", "Hier ist eine Vorschau. Ich bin {age_anna} Jahre alt. Klicke auf 'Nächstes Medium' für mehr.")
+PREVIEW_CAPTION_EN_TPL = os.getenv("PREVIEW_CAPTION_EN", "Here is a preview. I am {age_anna} years old. Click 'Next Medium' for more.")
 
 BTC_WALLET = "1FcgMLNBDLiuDSDip7AStuP19sq47LJB12"
 ETH_WALLET = "0xeeb8FDc4aAe71B53934318707d0e9747C5c66f6e"
@@ -80,7 +84,7 @@ texts = {
     "discount_offer_button": {"de": "💸 Zu meinen exklusiven Preisen 💸", "en": "💸 To my exclusive prices 💸"},
 
     # Preview
-    "preview_caption": {"de": "Hier ist eine Vorschau. Ich bin {age_anna} Jahre alt. Klicke auf 'Nächstes Medium' für mehr.", "en": "Here is a preview. I am {age_anna} years old. Click 'Next Medium' for more."},
+    "preview_caption": {"de": PREVIEW_CAPTION_DE_TPL, "en": PREVIEW_CAPTION_EN_TPL},
     "no_preview_content": {"de": "Ups! Ich konnte gerade keine passenden Inhalte finden...", "en": "Oops! I couldn't find any suitable content right now..."},
     "next_medium_button": {"de": "🖼️ Nächstes Medium", "en": "🖼️ Next Medium"},
     "prices_and_packages_button": {"de": "🛍️ Preise & Pakete", "en": "🛍️ Prices & Packages"},
@@ -103,7 +107,7 @@ texts = {
 
     # Payment
     "paypal_payment_text": {"de": "Super! Klicke auf den Link, um die Zahlung für **{package_info_text}** in Höhe von **{price}€** abzuschließen...\n\n➡️ [Hier sicher bezahlen]({paypal_link})\n\n", "en": "Great! Click the link to complete the payment for **{package_info_text}** amounting to **{price}€**...\n\n➡️ [Pay securely here]({paypal_link})\n\n"},
-    "contact_after_payment_text": {"de": "📲 *Melde dich danach bei @{TELEGRAM_USERNAME} mit einem Screenshot!*", "en": "📲 *Contact @{TELEGRAM_USERNAME} with a screenshot afterwards!*"},
+    "contact_after_payment_text": {"de": "📲 *Melde dich danach bei @{telegram_username} mit einem Screenshot!*", "en": "📲 *Contact @{telegram_username} with a screenshot afterwards!*"},
     "voucher_prompt_text": {"de": "Bitte sende mir jetzt deinen Amazon-Gutschein-Code als einzelne Nachricht.", "en": "Please send me your Amazon voucher code as a single message now."},
     "crypto_prompt_text": {"de": "Bitte wähle die gewünschte Kryptowährung:", "en": "Please choose the desired cryptocurrency:"},
     "crypto_payment_text": {"de": "Zahlung mit **{crypto_name}** für **{price}€**.\n\n`{wallet_address}`", "en": "Payment with **{crypto_name}** for **{price}€**.\n\n`{wallet_address}`"},
@@ -116,9 +120,8 @@ texts = {
     "live_call_unit_min": {"de": "{duration} Min", "en": "{duration} min"},
     "live_call_unit_hr": {"de": "{hours} Std", "en": "{hours} hr"},
     "live_call_available_text": {"de": "✅ Ich bin für deinen Call verfügbar!", "en": "✅ I am available for your call!"},
-    "live_call_selection_text": {"de": "Du hast einen **Live Call** für **{amount} Minuten** für *{price}€* ausgewählt.\n\nBitte schließe die Bezahlung ab und melde dich danach bei **@{TELEGRAM_USERNAME}** mit einem Screenshot.", "en": "You have selected a **Live Call** for **{amount} minutes** for *{price}€*.\n\nPlease complete the payment and then contact **@{TELEGRAM_USERNAME}** with a screenshot."},
+    "live_call_selection_text": {"de": "Du hast einen **Live Call** für **{amount} Minuten** für *{price}€* ausgewählt.\n\nBitte schließe die Bezahlung ab und melde dich danach bei **@{telegram_username}** mit einem Screenshot.", "en": "You have selected a **Live Call** for **{amount} minutes** for *{price}€*.\n\nPlease complete the payment and then contact **@{telegram_username}** with a screenshot."},
     "package_info_live_call": {"de": "{amount} Min Live Call", "en": "{amount} min Live Call"},
-
 
     # Meeting
     "meeting_menu_text": {"de": "📅 Wähle die gewünschte Dauer für dein Treffen:", "en": "📅 Choose the desired duration for your meeting:"},
@@ -166,9 +169,9 @@ texts = {
 
 def get_text(key: str, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> str:
     """Fetches a string in the user's chosen language."""
-    lang = context.user_data.get('language', 'de')  # Default to German
+    lang = context.user_data.get('language', 'de')
     text_template = texts.get(key, {}).get(lang) or texts.get(key, {}).get('en', f"<{key}_{lang}_NOT_FOUND>")
-    return text_template.format(**kwargs) if kwargs else text_template
+    return text_template.format(**kwargs)
 
 # --- Helper Functions ---
 def load_vouchers():
@@ -198,7 +201,8 @@ def ensure_user_in_stats(user_id: int, stats: dict) -> dict:
             "preview_clicks": 0,
             "payments_initiated": [],
             "banned": False,
-            "paypal_offer_sent": False
+            "paypal_offer_sent": False,
+            "language": "de" # Default language
         }
         save_stats(stats)
     return stats
@@ -244,20 +248,20 @@ def is_user_banned(user_id: int) -> bool:
 def get_discounted_price(base_price: int, discount_data: dict, package_key: str) -> int:
     if not discount_data: return -1
     discount_type = discount_data.get("type")
-
     if discount_type == "percent":
         value = discount_data.get("value", 0); new_price = base_price * (1 - value / 100); return ceil(new_price)
-    elif discount_type == "euro_packages":
-        packages = discount_data.get("packages", {});
-        if package_key in packages: return max(1, base_price - packages[package_key])
-    elif discount_type == "percent_packages":
-        packages = discount_data.get("packages", {});
-        if package_key in packages: value = packages[package_key]; new_price = base_price * (1 - value / 100); return ceil(new_price)
+    elif discount_type in ["euro_packages", "percent_packages"]:
+        packages = discount_data.get("packages", {})
+        if package_key in packages:
+            value = packages[package_key]
+            if discount_type == "euro_packages":
+                return max(1, base_price - value)
+            else: # percent_packages
+                return ceil(base_price * (1 - value / 100))
     return -1
 
 def get_package_button_text(media_type: str, amount: int, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
     stats = load_stats(); user_data = stats.get("users", {}).get(str(user_id), {}); base_price = PRICES[media_type][amount]; package_key = f"{media_type}_{amount}"
-
     duration_text = ""
     if media_type == "livecall":
         if amount < 60: duration_text = get_text("live_call_unit_min", context, duration=amount)
@@ -271,12 +275,10 @@ def get_package_button_text(media_type: str, amount: int, user_id: int, context:
     else:
         key = f"package_button_text_{media_type.lower()}"
         duration_text = get_text(key, context, amount=amount)
-
     if media_type not in ["livecall", "treffen"]:
         discount_price = get_discounted_price(base_price, user_data.get("discounts"), package_key)
         if discount_price != -1:
             return f"{duration_text} ~{base_price}~{discount_price}€ ✨"
-
     return f"{duration_text} {base_price}€"
 
 async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
@@ -284,17 +286,13 @@ async def check_user_status(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     stats = load_stats()
     user_id_str = str(user_id)
     now = datetime.now()
-
     if user_id_str not in stats.get("users", {}):
         stats = ensure_user_in_stats(user_id, stats)
         return "new", True, stats["users"][user_id_str]
-
     user_data = stats["users"][user_id_str]
     last_start_dt = datetime.fromisoformat(user_data.get("last_start"))
-
     if now - last_start_dt > timedelta(hours=24):
         return "returning", True, user_data
-
     return "active", False, user_data
 
 async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: User, event_text: str = ""):
@@ -319,40 +317,29 @@ async def send_or_update_admin_log(context: ContextTypes.DEFAULT_TYPE, user: Use
         if 'message is not modified' not in str(e): logger.warning(f"Temporary error updating admin log for user {user.id}: {e}")
 
 def get_media_files(media_type: str, purpose: str) -> list:
-    matching_files = []
+    target_prefix = f"{media_type.lower()}_{purpose.lower()}"
+    media_dir_path = MEDIA_DIR
+    if not os.path.isdir(media_dir_path): return []
+    matching_files = [os.path.join(media_dir_path, f) for f in os.listdir(media_dir_path) if f.lower().lstrip('•-_ ').replace(' ', '_').startswith(target_prefix)]
     if media_type == 'combined' and purpose == 'vorschau':
+        matching_files = []
         for mt in ['bilder', 'videos']:
             target_prefix = f"{mt.lower()}_{purpose.lower()}"
-            if not os.path.isdir(MEDIA_DIR): continue
-            for filename in os.listdir(MEDIA_DIR):
-                normalized_filename = filename.lower().lstrip('•-_ ').replace(' ', '_')
-                if normalized_filename.startswith(target_prefix): matching_files.append(os.path.join(MEDIA_DIR, filename))
-    else:
-        target_prefix = f"{media_type.lower()}_{purpose.lower()}"
-        if not os.path.isdir(MEDIA_DIR): return []
-        for filename in os.listdir(MEDIA_DIR):
-            normalized_filename = filename.lower().lstrip('•-_ ').replace(' ', '_')
-            if normalized_filename.startswith(target_prefix): matching_files.append(os.path.join(MEDIA_DIR, filename))
+            matching_files.extend([os.path.join(media_dir_path, f) for f in os.listdir(media_dir_path) if f.lower().lstrip('•-_ ').replace(' ', '_').startswith(target_prefix)])
     matching_files.sort()
     return matching_files
 
 async def cleanup_bot_messages(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     if 'tracked_message_ids' in context.chat_data:
-        message_ids = context.chat_data['tracked_message_ids']
-        for msg_id in list(message_ids):
+        for msg_id in list(context.chat_data['tracked_message_ids']):
             try:
                 await context.bot.delete_message(chat_id, msg_id)
-            except error.TelegramError:
-                pass
-        context.chat_data['tracked_message_ids'] = []
+            except error.TelegramError: pass
+        context.chat_data['tracked_message_ids'].clear()
     context.chat_data.pop('media_message_id', None)
-    context.chat_data.pop('control_message_id', None)
 
 def track_message(context: ContextTypes.DEFAULT_TYPE, message_id: int):
-    if 'tracked_message_ids' not in context.chat_data:
-        context.chat_data['tracked_message_ids'] = []
-    if message_id not in context.chat_data['tracked_message_ids']:
-        context.chat_data['tracked_message_ids'].append(message_id)
+    context.chat_data.setdefault('tracked_message_ids', []).append(message_id)
 
 async def send_tracked_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, **kwargs):
     message = await context.bot.send_message(chat_id=chat_id, **kwargs)
@@ -369,14 +356,10 @@ async def send_tracked_video(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *
     track_message(context, message.message_id)
     return message
 
-# --- FIXED FUNCTION ---
 async def query_or_message_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs):
-    """Edits a message if the update is a callback query, or sends a new one if it's a message."""
     if update.callback_query:
         try:
             await update.callback_query.edit_message_text(text, **kwargs)
-            # The original message ID is already being tracked if it was sent via a tracked method
-            # Re-tracking an edited message is often not necessary unless you replace the message entirely
         except error.BadRequest as e:
             if "message is not modified" not in str(e):
                 logger.warning(f"Could not edit message, sending new one. Error: {e}")
@@ -384,26 +367,21 @@ async def query_or_message_edit(update: Update, context: ContextTypes.DEFAULT_TY
     elif update.message:
         await send_tracked_message(context, chat_id=update.effective_chat.id, text=text, **kwargs)
 
-
 async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYPE, media_type: str, start_index: int = 0):
     chat_id = update.effective_chat.id
     await cleanup_bot_messages(chat_id, context)
-
     media_paths = get_media_files(media_type, "vorschau")
     if media_type == 'combined': random.shuffle(media_paths)
     context.user_data['preview_gallery'] = media_paths
-
     if not media_paths:
         text = get_text("no_preview_content", context)
         keyboard = [[InlineKeyboardButton(get_text("back_button", context), callback_data="main_menu")]]
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
-
     start_index %= len(media_paths)
     context.user_data[f'preview_index_{media_type}'] = start_index
     media_path = media_paths[start_index]
     file_extension = os.path.splitext(media_path)[1].lower()
-
     try:
         with open(media_path, 'rb') as media_file:
             media_message = None
@@ -413,7 +391,6 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 media_message = await send_tracked_video(context, chat_id=chat_id, video=media_file, protect_content=True, supports_streaming=True)
             if media_message:
                 context.chat_data['media_message_id'] = media_message.message_id
-
         caption = get_text("preview_caption", context, age_anna=AGE_ANNA)
         keyboard = [
             [InlineKeyboardButton(get_text("next_medium_button", context), callback_data=f"next_preview:{media_type}")],
@@ -427,37 +404,22 @@ async def send_preview_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Error sending preview file {media_path}: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-
-    if update.callback_query:
-        await cleanup_bot_messages(chat_id, context)
-    
+    user = update.effective_user; chat_id = update.effective_chat.id
+    stats = load_stats(); ensure_user_in_stats(user.id, stats)
     if 'language' not in context.user_data:
-        await cleanup_bot_messages(chat_id, context)
-        keyboard = [
-            [
-                InlineKeyboardButton("Deutsch 🇩🇪", callback_data="select_lang:de"),
-                InlineKeyboardButton("English 🇬🇧", callback_data="select_lang:en")
-            ]
-        ]
-        await send_tracked_message(context, chat_id=chat_id, text="Bitte wähle deine Sprache / Please select your language:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
+        context.user_data['language'] = stats["users"][str(user.id)].get("language", "de")
+    if update.message: await cleanup_bot_messages(chat_id, context)
     if is_user_banned(user.id):
         await send_tracked_message(context, chat_id=chat_id, text=get_text("banned_user_message", context))
         return
-
     try:
         status, should_notify, user_data = await check_user_status(user.id, context)
         await track_event("start_command", context, user.id)
         if user_data and not user_data.get("discount_sent"):
             last_start_dt = datetime.fromisoformat(user_data.get("last_start"))
             if datetime.now() - last_start_dt > timedelta(hours=2):
-                stats = load_stats()
                 stats["users"][str(user.id)]["discounts"] = {"type": "percent", "value": 10}
-                stats["users"][str(user.id)]["discount_sent"] = True
-                save_stats(stats)
+                stats["users"][str(user.id)]["discount_sent"] = True; save_stats(stats)
                 await save_discounts_to_telegram(context)
                 discount_text = get_text("discount_offer_text", context)
                 keyboard = [[InlineKeyboardButton(get_text("discount_offer_button", context), callback_data="show_price_options")]]
@@ -466,38 +428,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if should_notify:
             event_text = "Bot gestartet (neuer Nutzer)" if status == "new" else "Bot erneut gestartet"
             await send_or_update_admin_log(context, user, event_text=event_text)
-    except Exception as e:
-        logger.error(f"Error in start logic for user {user.id}: {e}")
-
-    stats = load_stats()
-    ensure_user_in_stats(user.id, stats)
-    stats["users"][str(user.id)]["last_start"] = datetime.now().isoformat()
-    save_stats(stats)
-
+    except Exception as e: logger.error(f"Error in start logic for user {user.id}: {e}")
+    stats["users"][str(user.id)]["last_start"] = datetime.now().isoformat(); save_stats(stats)
     welcome_text = get_text("welcome_text", context)
     keyboard = [
         [InlineKeyboardButton(get_text("preview_button", context), callback_data="show_preview:combined")],
         [InlineKeyboardButton(get_text("packages_button", context), callback_data="show_price_options")],
         [InlineKeyboardButton(get_text("live_call_button", context), callback_data="live_call_menu")],
-        [InlineKeyboardButton(get_text("meeting_button", context), callback_data="treffen_menu")]
+        [InlineKeyboardButton(get_text("meeting_button", context), callback_data="treffen_menu")],
+        [InlineKeyboardButton("🌐 Language / Sprache", callback_data="select_lang_menu")]
     ]
     await query_or_message_edit(update, context, welcome_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def show_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await cleanup_bot_messages(update.effective_chat.id, context)
+    keyboard = [
+        [InlineKeyboardButton("Deutsch 🇩🇪", callback_data="select_lang:de"), InlineKeyboardButton("English 🇬🇧", callback_data="select_lang:en")],
+        [InlineKeyboardButton(get_text("back_button", context), callback_data="main_menu")]
+    ]
+    await query_or_message_edit(update, context, text="Bitte wähle deine Sprache / Please select your language:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def show_prices_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user = update.effective_user
-    
+    chat_id = update.effective_chat.id; user = update.effective_user
     try:
         await cleanup_bot_messages(chat_id, context)
         await track_event("prices_viewed", context, user.id)
         await send_or_update_admin_log(context, user, event_text="Schaut sich die Preise an")
-
         caption = get_text("select_package_caption", context)
         keyboard = get_price_keyboard(user.id, context)
-        
         media_paths = get_media_files("videos", "preis")
-        
         if media_paths:
             random_media_path = random.choice(media_paths)
             try:
@@ -506,9 +465,7 @@ async def show_prices_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             except Exception as e_video:
                 logger.error(f"Could not send price video {random_media_path}, falling back to text: {e_video}")
-        
         await send_tracked_message(context, chat_id=chat_id, text=caption, reply_markup=InlineKeyboardMarkup(keyboard))
-
     except Exception as e:
         logger.error(f"FATAL ERROR in show_prices_page: {e}")
         try:
@@ -517,39 +474,29 @@ async def show_prices_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Could not even send error message to user {chat_id}: {e_send}")
 
 async def show_treffen_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    buchung = context.user_data.get('treffen_buchung', {})
-    chat_id = update.effective_chat.id
+    user = update.effective_user; buchung = context.user_data.get('treffen_buchung', {}); chat_id = update.effective_chat.id
     await cleanup_bot_messages(chat_id, context)
-
     if not all(k in buchung for k in ['duration', 'date', 'location']):
         text = get_text("meeting_summary_error", context)
         keyboard = [[InlineKeyboardButton(get_text("back_to_meeting_menu_button", context), callback_data="treffen_menu")]]
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
-
-    duration = buchung['duration']
-    duration_text = get_package_button_text('treffen', duration, user.id, context).split(' ')[0]
-    full_price = PRICES['treffen'][duration]
-    deposit = ceil(full_price / 4)
-    cash_price = full_price * 0.9
-    
-    summary_text = get_text("meeting_summary_title", context)
-    summary_text += get_text("meeting_summary_duration", context, duration_text=duration_text)
-    summary_text += get_text("meeting_summary_date", context, date=buchung['date'])
-    summary_text += get_text("meeting_summary_location", context, location=buchung['location'])
-    summary_text += get_text("meeting_summary_total_price", context, full_price=full_price)
-    summary_text += get_text("meeting_summary_cash_discount", context, discount_amount=full_price * 0.1)
-    summary_text += get_text("meeting_summary_final_price", context, cash_price=cash_price)
-    summary_text += get_text("meeting_summary_deposit_info", context, deposit=deposit)
-
+    duration = buchung['duration']; duration_text = get_package_button_text('treffen', duration, user.id, context).split(' ')[0]
+    full_price = PRICES['treffen'][duration]; deposit = ceil(full_price / 4); cash_price = full_price * 0.9
+    summary_text = (get_text("meeting_summary_title", context) +
+                    get_text("meeting_summary_duration", context, duration_text=duration_text) +
+                    get_text("meeting_summary_date", context, date=buchung['date']) +
+                    get_text("meeting_summary_location", context, location=buchung['location']) +
+                    get_text("meeting_summary_total_price", context, full_price=full_price) +
+                    get_text("meeting_summary_cash_discount", context, discount_amount=full_price * 0.1) +
+                    get_text("meeting_summary_final_price", context, cash_price=cash_price) +
+                    get_text("meeting_summary_deposit_info", context, deposit=deposit))
     keyboard = [
         [InlineKeyboardButton(get_text("deposit_info_button_summary", context), callback_data="treffen_info_anzahlung_summary")],
         [InlineKeyboardButton(get_text("deposit_paypal_button", context, deposit=deposit), callback_data=f"pay_paypal:treffen:{duration}")],
         [InlineKeyboardButton(get_text("deposit_voucher_button", context, deposit=deposit), callback_data=f"pay_voucher:treffen:{duration}")],
         [InlineKeyboardButton(get_text("deposit_crypto_button", context, deposit=deposit), callback_data=f"pay_crypto:treffen:{duration}")],
-        [InlineKeyboardButton(get_text("cancel_booking_button", context), callback_data="treffen_menu")]
-    ]
+        [InlineKeyboardButton(get_text("cancel_booking_button", context), callback_data="treffen_menu")]]
     await send_tracked_message(context, chat_id=chat_id, text=get_text("meeting_available_status", context))
     await send_tracked_message(context, chat_id=chat_id, text=summary_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -558,10 +505,8 @@ def get_price_keyboard(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(get_package_button_text("bilder", 10, user_id, context), callback_data="select_package:bilder:10"), InlineKeyboardButton(get_package_button_text("videos", 10, user_id, context), callback_data="select_package:videos:10")],
         [InlineKeyboardButton(get_package_button_text("bilder", 25, user_id, context), callback_data="select_package:bilder:25"), InlineKeyboardButton(get_package_button_text("videos", 25, user_id, context), callback_data="select_package:videos:25")],
         [InlineKeyboardButton(get_package_button_text("bilder", 35, user_id, context), callback_data="select_package:bilder:35"), InlineKeyboardButton(get_package_button_text("videos", 35, user_id, context), callback_data="select_package:videos:35")],
-        [InlineKeyboardButton(get_text("main_menu_button", context), callback_data="main_menu")]
-    ]
-    
-# --- Admin Menu Functions (remains in German for the admin) ---
+        [InlineKeyboardButton(get_text("main_menu_button", context), callback_data="main_menu")]]
+
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if str(update.effective_user.id) != ADMIN_USER_ID:
         await update.message.reply_text("⛔️ Du hast keine Berechtigung für diesen Befehl.")
@@ -573,10 +518,10 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📊 Nutzer-Statistiken", callback_data="admin_stats_users"), InlineKeyboardButton("🖱️ Klick-Statistiken", callback_data="admin_stats_clicks")],
         [InlineKeyboardButton("🎟️ Gutscheine", callback_data="admin_show_vouchers")],
-        [InlineKeyboardButton("👤 Nutzer verwalten", callback_data="admin_user_manage")]
-    ]
+        [InlineKeyboardButton("👤 Nutzer verwalten", callback_data="admin_user_manage")]]
     await query_or_message_edit(update, context, text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
+# Other admin functions remain the same...
 async def show_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "👤 *Nutzerverwaltung*\n\nWähle eine Aktion aus:"
     keyboard = [
@@ -606,32 +551,28 @@ async def show_manage_discounts_menu(update: Update, context: ContextTypes.DEFAU
     ]
     await query_or_message_edit(update, context, text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    chat_id = update.effective_chat.id
-    user = update.effective_user
 
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query; await query.answer(); data = query.data
+    chat_id = update.effective_chat.id; user = update.effective_user
     if data.startswith("select_lang:"):
         lang_code = data.split(":")[1]
         context.user_data['language'] = lang_code
+        stats = load_stats(); stats["users"][str(user.id)]["language"] = lang_code; save_stats(stats)
         await start(update, context)
         return
-
-    stats = load_stats()
-    ensure_user_in_stats(user.id, stats)
+    if data == "select_lang_menu":
+        await show_language_selection(update, context)
+        return
+    stats = load_stats(); ensure_user_in_stats(user.id, stats)
     user_data = stats["users"][str(user.id)]
-
     if is_user_banned(user.id):
         await query.answer(get_text("banned_user_alert", context), show_alert=True)
         return
-
     if data == "main_menu":
         await start(update, context)
         return
-    
-    # --- ADMIN CALLBACKS ---
+    # Admin callbacks...
     if data.startswith("admin_"):
         if str(user.id) != ADMIN_USER_ID:
             await query.answer("⛔️ Keine Berechtigung.", show_alert=True)
@@ -677,11 +618,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("admin_delete_user_discount_execute:"):
             _, user_id_to_clear = data.split(":")
             await execute_delete_user_discount(update, context, user_id_to_clear)
-        
         return
 
-    # --- USER CALLBACKS ---
-    
+    # User callbacks...
     if data == "download_vouchers_pdf":
         vouchers = load_vouchers(); pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", size=12)
         pdf.cell(0, 10, "Amazon Gutschein Report", ln=True, align='C')
@@ -691,7 +630,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         pdf_buffer = BytesIO(pdf.output(dest='S').encode('latin-1')); pdf_buffer.seek(0)
         await context.bot.send_document(chat_id=chat_id, document=pdf_buffer, filename=f"Gutschein-Report_{datetime.now().strftime('%Y-%m-%d')}.pdf")
         return
-        
     if data.startswith("show_preview:"):
         _, media_type = data.split(":")
         if user_data.get("preview_clicks", 0) >= 25:
@@ -701,16 +639,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await send_or_update_admin_log(context, user, event_text="Schaut sich Vorschau an")
         await send_preview_message(update, context, media_type)
         return
-
     elif data == "show_price_options":
         await show_prices_page(update, context)
         return
-
     elif data == "live_call_menu":
         await cleanup_bot_messages(chat_id, context)
         text = get_text("live_call_menu_text", context)
-        keyboard = []
-        row = []
+        keyboard = []; row = []
         for duration, price in PRICES['livecall'].items():
             duration_text = get_text("live_call_unit_min", context, duration=duration) if duration < 60 else get_text("live_call_unit_hr", context, hours=duration//60)
             row.append(InlineKeyboardButton(f"{duration_text} - {price}€", callback_data=f"select_package:livecall:{duration}"))
@@ -719,12 +654,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton(get_text("main_menu_button", context), callback_data="main_menu")])
         await send_tracked_message(context, chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
-
     elif data == "treffen_menu":
         await cleanup_bot_messages(chat_id, context)
         text = get_text("meeting_menu_text", context)
-        keyboard = []
-        row = []
+        keyboard = []; row = []
         for duration in sorted(PRICES['treffen'].keys()):
             button_text = get_package_button_text('treffen', duration, user.id, context)
             row.append(InlineKeyboardButton(button_text, callback_data=f"select_treffen_duration:{duration}"))
@@ -734,20 +667,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton(get_text("main_menu_button", context), callback_data="main_menu")])
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
-
     elif data in ["treffen_info_anzahlung_menu", "treffen_info_anzahlung_summary"]:
         text = get_text("meeting_deposit_info_text", context)
-        if data == "treffen_info_anzahlung_menu":
-            keyboard = [[InlineKeyboardButton(get_text("understood_back_button", context), callback_data="treffen_menu")]]
-        else:
-            keyboard = [[InlineKeyboardButton(get_text("understood_back_to_payment_button", context), callback_data="back_to_treffen_summary")]]
+        keyboard = [[InlineKeyboardButton(get_text("understood_back_button" if data == "treffen_info_anzahlung_menu" else "understood_back_to_payment_button", context), callback_data="treffen_menu" if data == "treffen_info_anzahlung_menu" else "back_to_treffen_summary")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return
-
     elif data == "back_to_treffen_summary":
         await show_treffen_summary(update, context)
         return
-
     elif data.startswith("select_treffen_duration:"):
         await cleanup_bot_messages(chat_id, context)
         _, duration_str = data.split(":")
@@ -756,7 +683,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         text = get_text("meeting_date_prompt", context)
         await send_tracked_message(context, chat_id, text=text, parse_mode='Markdown')
         return
-
     elif data.startswith("next_preview:"):
         if user_data.get("preview_clicks", 0) >= 25:
             await query.answer(get_text("preview_limit_reached_alert", context), show_alert=True)
@@ -765,93 +691,60 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = [[InlineKeyboardButton(get_text("view_prices_button", context), callback_data="show_price_options")], [InlineKeyboardButton(get_text("main_menu_button", context), callback_data="main_menu")]]
             await send_tracked_message(context, chat_id, text=limit_text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
-
-        stats["users"][str(user.id)]["preview_clicks"] = user_data.get("preview_clicks", 0) + 1
-        save_stats(stats)
+        stats["users"][str(user.id)]["preview_clicks"] = user_data.get("preview_clicks", 0) + 1; save_stats(stats)
         await track_event("next_preview", context, user.id)
         _, media_type = data.split(":")
         await send_or_update_admin_log(context, user, event_text=f"Nächstes Medium ({media_type})")
-
         media_paths = context.user_data.get('preview_gallery', [])
         if not media_paths: return
-
-        index_key = f'preview_index_{media_type}'
-        current_index = context.user_data.get(index_key, 0)
-        next_index = (current_index + 1) % len(media_paths)
-        context.user_data[index_key] = next_index
-
-        media_path = media_paths[next_index]
-        media_message_id = context.chat_data.get("media_message_id")
+        index_key = f'preview_index_{media_type}'; current_index = context.user_data.get(index_key, 0)
+        next_index = (current_index + 1) % len(media_paths); context.user_data[index_key] = next_index
+        media_path = media_paths[next_index]; media_message_id = context.chat_data.get("media_message_id")
         if not media_message_id:
             await send_preview_message(update, context, media_type, start_index=next_index)
             return
-
         try:
             with open(media_path, 'rb') as media_file:
                 is_video = any(media_path.lower().endswith(ext) for ext in ['.mp4', '.mov', '.m4v'])
                 new_media = InputMediaVideo(media=media_file) if is_video else InputMediaPhoto(media=media_file)
                 await context.bot.edit_message_media(chat_id=chat_id, message_id=media_message_id, media=new_media)
-        except error.BadRequest as e:
-            if "message is not modified" not in str(e):
-                await send_preview_message(update, context, media_type, start_index=next_index)
-        except Exception:
+        except (error.BadRequest, Exception):
             await send_preview_message(update, context, media_type, start_index=next_index)
         return
-
     elif data.startswith("select_package:"):
         await track_event("package_selected", context, user.id)
         _, media_type, amount_str = data.split(":")
-        amount = int(amount_str)
-        await cleanup_bot_messages(chat_id, context)
-
+        amount = int(amount_str); await cleanup_bot_messages(chat_id, context)
         if media_type == "livecall":
             await send_tracked_message(context, chat_id, text=get_text("live_call_available_text", context))
             price = PRICES[media_type][amount]
-            text = get_text("live_call_selection_text", context, amount=amount, price=price, TELEGRAM_USERNAME=TELEGRAM_USERNAME)
-            keyboard = [
-                [InlineKeyboardButton(f"💸 {price}€ per PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")],
-                [InlineKeyboardButton(f"🎟️ {price}€ per Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")],
-                [InlineKeyboardButton(f"🪙 {price}€ per Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")],
-                [InlineKeyboardButton(get_text("back_button", context), callback_data="live_call_menu")]
-            ]
+            text = get_text("live_call_selection_text", context, amount=amount, price=price, telegram_username=TELEGRAM_USERNAME)
+            keyboard = [[InlineKeyboardButton(f"💸 {price}€ per PayPal", callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(f"🎟️ {price}€ per Gutschein", callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton(f"🪙 {price}€ per Krypto", callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton(get_text("back_button", context), callback_data="live_call_menu")]]
             await send_tracked_message(context, chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return
-
-        base_price = PRICES[media_type][amount]
-        package_key = f"{media_type}_{amount}"
+        base_price = PRICES[media_type][amount]; package_key = f"{media_type}_{amount}"
         price = get_discounted_price(base_price, user_data.get("discounts"), package_key)
         if price == -1: price = base_price
         price_str = f"~{base_price}€~ *{price}€* ({get_text('discount_text', context)})" if price != base_price else f"*{price}€*"
-        
         media_type_str = get_text(f"package_button_text_{media_type.lower()}", context, amount="").replace(str(amount), "").strip()
         text = get_text("package_selection_text", context, amount=amount, media_type=media_type_str, price_str=price_str)
-
         if not user_data.get("paypal_offer_sent"):
             text += get_text("paypal_offer_text", context)
             stats["users"][str(user.id)]["paypal_offer_sent"] = True; save_stats(stats)
-            
-        keyboard = [
-            [InlineKeyboardButton(get_text("paypal_button", context), callback_data=f"pay_paypal:{media_type}:{amount}")],
-            [InlineKeyboardButton(get_text("voucher_button", context), callback_data=f"pay_voucher:{media_type}:{amount}")],
-            [InlineKeyboardButton(get_text("crypto_button", context), callback_data=f"pay_crypto:{media_type}:{amount}")],
-            [InlineKeyboardButton(get_text("back_to_prices_button", context), callback_data="show_price_options")]
-        ]
+        keyboard = [[InlineKeyboardButton(get_text("paypal_button", context), callback_data=f"pay_paypal:{media_type}:{amount}")], [InlineKeyboardButton(get_text("voucher_button", context), callback_data=f"pay_voucher:{media_type}:{amount}")], [InlineKeyboardButton(get_text("crypto_button", context), callback_data=f"pay_crypto:{media_type}:{amount}")], [InlineKeyboardButton(get_text("back_to_prices_button", context), callback_data="show_price_options")]]
         await send_tracked_message(context, chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return
 
+    # Payment logic...
     async def update_payment_log(payment_method: str, price_val: int, package_info: str):
         stats_log = load_stats(); user_data_log = stats_log.get("users", {}).get(str(user.id))
         if user_data_log:
             payment_info = f"{payment_method} ({package_info}): {price_val}€"
-            if payment_info not in user_data_log.get("payments_initiated", []):
-                user_data_log.setdefault("payments_initiated", []).append(payment_info); save_stats(stats_log)
+            user_data_log.setdefault("payments_initiated", []).append(payment_info); save_stats(stats_log)
         await send_or_update_admin_log(context, user, event_text=f"Bezahlmethode '{payment_method}' für {price_val}€ gewählt")
-
+    
     if data.startswith(("pay_paypal:", "pay_voucher:", "pay_crypto:")):
-        _, media_type, amount_str = data.split(":")
-        amount = int(amount_str)
-        original_message = query.message
-
+        _, media_type, amount_str = data.split(":"); amount = int(amount_str); original_message = query.message
         if media_type == "livecall":
             price = PRICES[media_type][amount]
             package_info_text = get_text("package_info_live_call", context, amount=amount)
@@ -860,48 +753,37 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             duration_text = get_package_button_text('treffen', amount, user.id, context).split(' ')[0]
             package_info_text = get_text("package_info_meeting_deposit", context, duration_text=duration_text)
         else:
-            base_price = PRICES[media_type][amount]
-            package_key = f"{media_type}_{amount}"
+            base_price = PRICES[media_type][amount]; package_key = f"{media_type}_{amount}"
             price = get_discounted_price(base_price, user_data.get("discounts"), package_key)
             if price == -1: price = base_price
-            package_info_text = f"{amount} {media_type.capitalize()}"
-
+            package_info_text = f"{amount} {get_text(f'package_button_text_{media_type}', context, amount='').replace(' ', '')}"
         back_button_data = "back_to_treffen_summary" if media_type == "treffen" else (f"select_package:{media_type}:{amount}" if media_type == "livecall" else "show_price_options")
-
         if data.startswith("pay_paypal:"):
             await track_event(f"payment_{media_type}", context, user.id); await update_payment_log("PayPal", price, package_info_text)
             paypal_link = f"https://paypal.me/{PAYPAL_USER}/{price}"
             text = get_text("paypal_payment_text", context, package_info_text=package_info_text, price=price, paypal_link=paypal_link)
             if media_type in ["livecall", "treffen"]:
-                text += get_text("contact_after_payment_text", context, TELEGRAM_USERNAME=TELEGRAM_USERNAME)
+                text += get_text("contact_after_payment_text", context, telegram_username=TELEGRAM_USERNAME)
             await original_message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text("back_button", context), callback_data=back_button_data)]]), parse_mode='Markdown', disable_web_page_preview=True)
-        
         elif data.startswith("pay_voucher:"):
             await track_event(f"payment_{media_type}", context, user.id); await update_payment_log("Gutschein", price, package_info_text)
             context.user_data["awaiting_voucher"] = "amazon"
             text = get_text("voucher_prompt_text", context)
             await original_message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text("cancel_button", context), callback_data=back_button_data)]]))
-        
         elif data.startswith("pay_crypto:"):
             await track_event(f"payment_{media_type}", context, user.id); await update_payment_log("Krypto", price, package_info_text)
             text = get_text("crypto_prompt_text", context)
-            keyboard = [
-                [InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")],
-                [InlineKeyboardButton(get_text("back_button", context), callback_data=f"select_package:{media_type}:{amount}")]
-            ]
+            keyboard = [[InlineKeyboardButton("Bitcoin (BTC)", callback_data=f"show_wallet:btc:{media_type}:{amount}"), InlineKeyboardButton("Ethereum (ETH)", callback_data=f"show_wallet:eth:{media_type}:{amount}")], [InlineKeyboardButton(get_text("back_button", context), callback_data=f"select_package:{media_type}:{amount}")]]
             await original_message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
-
     elif data.startswith("show_wallet:"):
-        _, crypto_type, media_type, amount_str = data.split(":")
-        amount = int(amount_str); price = 0
+        _, crypto_type, media_type, amount_str = data.split(":"); amount = int(amount_str); price = 0
         if media_type == "livecall": price = PRICES[media_type][amount]
         elif media_type == "treffen": price = ceil(PRICES[media_type][amount] / 4)
         else:
             base_price = PRICES[media_type][amount]; package_key = f"{media_type}_{amount}"
             price = get_discounted_price(base_price, user_data.get("discounts"), package_key)
             price = price if price != -1 else base_price
-        
         wallet_address = BTC_WALLET if crypto_type == "btc" else ETH_WALLET
         crypto_name = "Bitcoin (BTC)" if crypto_type == "btc" else "Ethereum (ETH)"
         text = get_text("crypto_payment_text", context, crypto_name=crypto_name, price=price, wallet_address=wallet_address)
@@ -910,19 +792,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    text_input = update.message.text
-    chat_id = update.effective_chat.id
-
+    user = update.effective_user; text_input = update.message.text; chat_id = update.effective_chat.id
     if str(user.id) == ADMIN_USER_ID:
         try: await context.bot.delete_message(chat_id, update.message.message_id)
         except error.TelegramError: pass
-        
         if context.user_data.get('awaiting_user_id_for_sperren'): await handle_admin_user_management_input(update, context, "sperren"); return
         if context.user_data.get('awaiting_user_id_for_entsperren'): await handle_admin_user_management_input(update, context, "entsperren"); return
         if context.user_data.get('awaiting_user_id_for_preview_limit'): await handle_admin_preview_limit_input(update, context); return
         if context.user_data.get('awaiting_user_id_for_discount_deletion'): await handle_admin_delete_user_discount_input(update, context); return
-    
     try: await context.bot.delete_message(chat_id, update.message.message_id)
     except error.TelegramError: pass
 
@@ -938,21 +815,16 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await send_tracked_message(context, chat_id, text=get_text("invalid_date_prompt", context), parse_mode='Markdown')
         return
-
     if context.user_data.get('awaiting_input') == 'treffen_location':
         buchung = context.user_data.get('treffen_buchung', {})
         buchung['location'] = text_input
         context.user_data['awaiting_input'] = None
         await show_treffen_summary(update, context)
         return
-
     if context.user_data.get("awaiting_voucher"):
         await cleanup_bot_messages(chat_id, context)
-        provider = context.user_data.pop("awaiting_voucher")
-        code = text_input
-        vouchers = load_vouchers()
-        vouchers.setdefault(provider, []).append(code)
-        save_vouchers(vouchers)
+        provider = context.user_data.pop("awaiting_voucher"); code = text_input
+        vouchers = load_vouchers(); vouchers.setdefault(provider, []).append(code); save_vouchers(vouchers)
         notification_text = (f"📬 *Neuer Gutschein erhalten!* 📬\n\n*Anbieter:* {provider.capitalize()}\n*Code:* `{code}`\n*Von Nutzer:* {escape_markdown(user.first_name, version=2)} (`{user.id}`)\n\n⚠️ *AKTION ERFORDERLICH:* Code prüfen!")
         if NOTIFICATION_GROUP_ID: await context.bot.send_message(chat_id=NOTIFICATION_GROUP_ID, text=notification_text, parse_mode='Markdown')
         await send_or_update_admin_log(context, user, event_text=f"Gutschein '{provider}' eingereicht")
@@ -961,6 +833,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_tracked_message(context, chat_id, text=user_confirmation_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return
 
+# Admin text input handlers...
 async def handle_admin_user_management_input(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
     user_id_to_manage = update.message.text; context.user_data[f'awaiting_user_id_for_{action}'] = False
     await cleanup_bot_messages(update.effective_chat.id, context)
@@ -1015,6 +888,7 @@ async def execute_delete_user_discount(update: Update, context: ContextTypes.DEF
         await query_or_message_edit(update, context, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="admin_manage_discounts")]]))
     else: await query_or_message_edit(update, context, f"ℹ️ Fehler: Nutzer `{user_id_to_clear}` hat keine Rabatte.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Zurück", callback_data="admin_manage_discounts")]]))
 
+
 async def post_init(application: Application):
     await load_discounts_from_telegram(application)
 
@@ -1024,7 +898,6 @@ def main() -> None:
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-
     if WEBHOOK_URL:
         port = int(os.environ.get("PORT", 8443))
         logger.info(f"Starting bot in webhook mode on port {port}")
