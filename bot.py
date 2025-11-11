@@ -35,8 +35,9 @@ AGE_ANNA = os.getenv("AGE_ANNA", "18")
 PREVIEW_CAPTION_DE_TPL = os.getenv("PREVIEW_CAPTION_DE", "Hier ist eine Vorschau. Ich bin {age_anna} Jahre alt. Klicke auf 'Nächstes Medium' für mehr.")
 PREVIEW_CAPTION_EN_TPL = os.getenv("PREVIEW_CAPTION_EN", "Here is a preview. I am {age_anna} years old. Click 'Next Medium' for more.")
 
-BTC_WALLET = "1FcgMLNBDLiuDSDip7AStuP19sq47LJB12"
-ETH_WALLET = "0xeeb8FDc4aAe71B53934318707d0e9747C5c66f6e"
+# +++ GEÄNDERT +++
+BTC_WALLET = os.getenv("BTC_WALLET", "DEINE_BTC_ADRESSE_HIER")
+ETH_WALLET = os.getenv("ETH_WALLET", "DEINE_ETH_ADRESSE_HIER")
 
 PRICES = {
     "bilder": {10: 5, 25: 10, 35: 15},
